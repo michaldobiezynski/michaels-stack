@@ -1,0 +1,28 @@
+{
+  "name": "michaels-stack",
+  "version": "1.0.0",
+  "description": "Michael's full Claude Code toolkit — TypeScript/React/Vue/Node/Go + Tauri/Rust. Includes agents, skills, commands, hooks, and coding standards.",
+  "author": {
+    "name": "Michal Dobiezynski",
+    "email": "michaldobiezynski@users.noreply.github.com"
+  },
+  "repository": "https://github.com/michaldobiezynski/michaels-stack",
+  "license": "MIT",
+  "keywords": [
+    "typescript",
+    "react",
+    "nextjs",
+    "vue",
+    "go",
+    "rust",
+    "tauri",
+    "security",
+    "code-review",
+    "testing",
+    "performance"
+  ],
+  "skills": "./skills/",
+  "agents": "./agents/",
+  "commands": ["./commands/"],
+  "hooks": "./hooks/hooks.json"
+}

@@ -1,0 +1,20 @@
+{
+  "name": "michaels-stack-marketplace",
+  "owner": {
+    "name": "Michal Dobiezynski",
+    "email": "michaldobiezynski@users.noreply.github.com"
+  },
+  "metadata": {
+    "description": "Michael's Claude Code plugin collection — TypeScript/React/Vue/Node/Go + Tauri/Rust toolkit",
+    "version": "1.0.0",
+    "pluginRoot": "."
+  },
+  "plugins": [
+    {
+      "name": "michaels-stack",
+      "source": ".",
+      "description": "Full development toolkit: 19 skills, 6 agents, 11 commands, 7 rules, 4 hooks. Covers security review, code review, Go/Rust/TypeScript patterns, ATDD workflow, browser automation, and more.",
+      "version": "1.0.0"
+    }
+  ]
+}

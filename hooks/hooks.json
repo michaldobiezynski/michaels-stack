@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/scripts/claudeception-activator.sh",
+        "description": "Evaluate each interaction for extractable knowledge"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "command": "npx block-no-verify@1.1.2",
+        "description": "Block --no-verify on git commands",
+        "exitCode": 2
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "command": "${CLAUDE_PLUGIN_ROOT}/scripts/spec-reminder.sh",
+        "description": "ATDD reminder: check acceptance criteria before writing source files"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit",
+        "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -qE '\\.(ts|tsx|js|jsx)$'; then FILE=$(echo \"$CLAUDE_TOOL_INPUT\" | grep -oE '[^ ]*\\.(ts|tsx|js|jsx)'); if [ -f \"$FILE\" ] && grep -n 'console\\.log' \"$FILE\" >/dev/null 2>&1; then echo '⚠️  console.log detected — remove before committing' >&2; fi; fi",
+        "description": "Warn on console.log in TypeScript/JS files"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/scripts/test-stream-check.sh",
+        "description": "ATDD: check if source was modified but tests are missing"
+      }
+    ]
+  }
+}
