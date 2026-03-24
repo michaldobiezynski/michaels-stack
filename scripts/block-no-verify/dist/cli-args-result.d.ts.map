@@ -1,0 +1,1 @@
+{"version":3,"file":"cli-args-result.d.ts","sourceRoot":"","sources":["../src/cli-args-result.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,WAAW,EAAE,MAAM,mBAAmB,CAAA;AAEpD;;GAEG;AACH,MAAM,WAAW,OAAO;IACtB,MAAM,EAAE,WAAW,CAAA;IACnB,OAAO,EAAE,MAAM,GAAG,IAAI,CAAA;IACtB,QAAQ,EAAE,OAAO,CAAA;IACjB,WAAW,EAAE,OAAO,CAAA;CACrB"}

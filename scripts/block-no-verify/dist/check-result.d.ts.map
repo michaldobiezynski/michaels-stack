@@ -1,0 +1,1 @@
+{"version":3,"file":"check-result.d.ts","sourceRoot":"","sources":["../src/check-result.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,UAAU,EAAE,MAAM,kBAAkB,CAAA;AAElD;;GAEG;AACH,MAAM,WAAW,WAAW;IAC1B,qCAAqC;IACrC,OAAO,EAAE,OAAO,CAAA;IAChB,iDAAiD;IACjD,MAAM,CAAC,EAAE,MAAM,CAAA;IACf,uCAAuC;IACvC,UAAU,CAAC,EAAE,UAAU,CAAA;CACxB"}
