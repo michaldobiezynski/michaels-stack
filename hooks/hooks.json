@@ -10,7 +10,7 @@
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "command": "npx block-no-verify@1.1.2",
+        "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/block-no-verify/dist/cli.js",
         "description": "Block --no-verify on git commands",
         "exitCode": 2
       },
