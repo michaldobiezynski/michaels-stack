@@ -1,10 +1,10 @@
 ---
 name: shorts-hook-frame-headline-card
 description: |
-  Add a 1-2 second static "headline card" overlay at the start of every
-  TikTok / Reels / YouTube Shorts clip to stop the FYP scroll. The card
-  shows a big-text question or hook that primes the viewer for the
-  payoff. Use when:
+  Add a 2-3 second "headline card" intro at the start of every TikTok /
+  Reels / YouTube Shorts clip to stop the FYP scroll. The card shows a
+  big-text question or hook over a blurred frame from inside the clip,
+  then cross-fades into the unblurred body. Use when:
   (1) building a podcast-clipping pipeline where Shorts open with a
   bare talking head and the first 0.5s of audio isn't enough to retain
   scrollers, (2) you want the same "question-then-answer" framing that
@@ -13,13 +13,13 @@ description: |
   than the GUEST'S opening sentence, (4) you're already overlaying
   burned-in captions via the concat-demuxer pattern and want to stack
   a hook card on top without re-architecting the filter graph.
-  Covers: which text to put on the card (priority order:
-  rephrased-host-question, then clip.hook, then clip.topic), PIL
-  rendering at 100+pt over a darkened backdrop, and the ffmpeg overlay
-  layer that stacks on top of any existing caption track via
-  enable='between(t,0,DURATION)'.
+  Covers: hook text selection with a fallback chain that prefers
+  always-bounded fields over maybe-unbounded ones (preceding_question
+  -> topic -> hook), PIL rendering at 100+pt with auto-shrink-to-fit
+  in BOTH dimensions, blurred-frame compositing as background, and
+  ffmpeg xfade as the transition into the body.
 author: Claude Code
-version: 1.1.0
+version: 1.2.0
 date: 2026-05-13
 ---
 
@@ -73,103 +73,150 @@ Add a `preceding_question` field to the per-clip JSON contract:
 "Max 8 words" matters because the card is rendered at ~100pt; long
 questions wrap to 4-5 lines and stop reading like a hook.
 
-### Part 2: pick the hook text
+### Part 2: pick the hook text — order by fit, not by quality
 
-Priority order in the renderer:
+Priority in the renderer:
 
 ```python
 def pick_hook_text(clip: dict) -> str:
+    """
+    1. preceding_question  - LLM-rephrased headline, <=8 words by prompt
+    2. topic               - <=6 words by prompt. Always short enough.
+    3. hook                - speaker's opening sentence. LAST resort.
+    """
     q = (clip.get("preceding_question") or "").strip()
     if q:
         return q
+    t = (clip.get("topic") or "").strip()
+    if t:
+        return t
     h = (clip.get("hook") or "").strip()
     if h:
-        # Truncate at first sentence-end
         for sep in [". ", "? ", "! "]:
             if sep in h:
                 h = h.split(sep, 1)[0] + sep.strip()
                 break
         return h
-    return (clip.get("topic") or "WATCH THIS").strip()
+    return "WATCH THIS"
 ```
 
-The preceding question is the strongest hook when present (host frames
-the topic, viewer wants the guest's answer). The clip's own hook is
-fine when the speaker IS the host or no clean setup exists. Topic is
-the bare fallback.
+**Why topic comes BEFORE hook in the fallback chain.** The preceding
+question is the punchiest option when present. When it's empty, the
+intuition says "fall back to the clip's own hook because it's the
+actual content". DON'T. The hook is the speaker's opening sentence and
+can be 20+ words ("When you select a partner, whether you realize it
+or not, you're choosing a whole lifestyle and not just the person").
+At 110pt all-caps that wraps to 13+ lines and overflows the canvas
+vertically. The `topic` field is constrained to <=6 words by the
+analyse prompt and is therefore always short enough to render
+cleanly. Order the fallback chain by guarantee-of-fit, not by what
+"feels" higher quality - the renderer has an auto-shrink guard for
+the hook-fallback case, but picking short text up front avoids the
+guard entirely and produces a more readable card.
 
-### Part 3: render the PNG
+### Part 3: render the PNG with auto-shrink + blurred background
 
-Fullscreen RGBA, semi-opaque dark backdrop, huge centred caps:
+Fullscreen RGBA, blurred-frame background, huge centred caps. The font
+auto-shrinks if the wrapped block won't fit in either dimension.
 
 ```python
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
-W, H = 1080, 1920  # Shorts vertical
+W, H = 1080, 1920
 HOOK_FONT_SIZE = 110
+HOOK_FONT_SIZE_MIN = 60
 HOOK_STROKE_WIDTH = 9
-HOOK_SIDE_MARGIN = 90      # pixel margin each side; wrap by pixel width not char count
-HOOK_BG_ALPHA = 200        # 0-255 darkening
+HOOK_SIDE_MARGIN = 90       # horizontal breathing room
+HOOK_VERT_MARGIN = 160      # vertical breathing room
+HOOK_BG_BLUR_SIGMA = 30
+HOOK_BG_BRIGHTNESS = 0.35   # darken so text reads cleanly
 
-def render_hook_frame_png(text: str, out_path, font_path):
+
+def _build_blurred_bg(bg_frame_png: Path) -> Image.Image:
+    """Scale-cover the frame to W x H, blur, darken. Returns RGBA."""
+    bg = Image.open(bg_frame_png).convert("RGBA")
+    bg_w, bg_h = bg.size
+    target = W / H
+    src = bg_w / bg_h
+    if src > target:
+        new_w = int(bg_h * target)
+        left = (bg_w - new_w) // 2
+        bg = bg.crop((left, 0, left + new_w, bg_h))
+    else:
+        new_h = int(bg_w / target)
+        top = (bg_h - new_h) // 2
+        bg = bg.crop((0, top, bg_w, top + new_h))
+    bg = bg.resize((W, H), Image.LANCZOS)
+    bg = bg.filter(ImageFilter.GaussianBlur(radius=HOOK_BG_BLUR_SIGMA))
+    return ImageEnhance.Brightness(bg).enhance(HOOK_BG_BRIGHTNESS)
+
+
+def render_hook_frame_png(text, out_path, font_path, bg_frame_png=None):
     text_caps = text.strip().upper()
-    font = ImageFont.truetype(font_path, HOOK_FONT_SIZE)
-    # CRITICAL: wrap by pixel width, not character count. textwrap.wrap
-    # underestimates line width because glyphs vary (W is ~3x wider than i
-    # at 110pt all-caps), so a 14-char limit overflows 1080px on words like
-    # WORKPLACE. See sibling skill pil-pixel-aware-word-wrap-large-fonts.
-    lines = _wrap_by_pixel_width(text_caps, font, W - 2 * HOOK_SIDE_MARGIN) or [text_caps]
+    max_block_h = H - 2 * HOOK_VERT_MARGIN
+    max_text_w = W - 2 * HOOK_SIDE_MARGIN
 
-    img = Image.new("RGBA", (W, H), (0, 0, 0, HOOK_BG_ALPHA))
+    # Auto-shrink until BOTH dimensions fit. This is the belt-and-braces
+    # guard. Two failure modes it catches:
+    # (a) Vertical: long fallback text wraps to 10+ lines and overflows
+    #     the canvas top/bottom.
+    # (b) Horizontal: a single long word (PROCRASTINATION, MANOSPHERE)
+    #     is wider than max_text_w on its own. _wrap_by_pixel_width
+    #     keeps a too-wide single word on its own line and lets it
+    #     overhang; the only fix is shrinking the font.
+    size = HOOK_FONT_SIZE
+    while True:
+        font = ImageFont.truetype(font_path, size)
+        wrapped = _wrap_by_pixel_width(text_caps, font, max_text_w) or [text_caps]
+        ascent, descent = font.getmetrics()
+        line_height = int((ascent + descent) * 1.05)
+        block_h = line_height * len(wrapped)
+        widest = max((font.getlength(L) for L in wrapped), default=0)
+        if (block_h <= max_block_h and widest <= max_text_w) or size <= HOOK_FONT_SIZE_MIN:
+            break
+        size -= 10
+
+    if bg_frame_png and bg_frame_png.exists():
+        img = _build_blurred_bg(bg_frame_png)
+    else:
+        img = Image.new("RGBA", (W, H), (0, 0, 0, 255))
     draw = ImageDraw.Draw(img)
-    ascent, descent = font.getmetrics()
-    line_height = int((ascent + descent) * 1.05)
-    block_top = (H - line_height * len(lines)) // 2
+    stroke_w = max(4, int(HOOK_STROKE_WIDTH * size / HOOK_FONT_SIZE))
+    block_top = (H - block_h) // 2
 
-    for i, line in enumerate(lines):
-        # Per-token rendering with keyword highlighting (yellow for numbers,
-        # proper nouns, acronyms; white for everything else). See related
-        # skill `tiktok-style-caption-keyword-highlighting` for the
-        # is_keyword heuristic and centred-line draw helper.
+    for i, line in enumerate(wrapped):
+        # Per-token rendering with keyword highlighting (yellow on
+        # numbers / proper nouns / acronyms, white otherwise).
+        # See `tiktok-style-caption-keyword-highlighting` for the
+        # is_keyword heuristic and the centred-line draw helper.
         draw_centred_line_with_highlights(
             draw, line, font, W, block_top + i * line_height,
-            stroke_width=HOOK_STROKE_WIDTH,
+            stroke_width=stroke_w,
         )
     img.save(out_path)
+
+
+def extract_representative_frame(src: Path, t: float, out_png: Path) -> bool:
+    """One PNG frame at `t` seconds. Used as the blurred bg of the hook
+    intro. Pick from inside the clip (e.g. clip_start + duration*0.30),
+    not the very first frame, so the bg has the same visual mood as
+    the body and avoids the speaker mid-blink."""
+    cmd = ["ffmpeg", "-y", "-ss", f"{t:.3f}", "-i", str(src),
+           "-frames:v", "1", "-q:v", "2", str(out_png)]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    return out_png.exists() and out_png.stat().st_size > 0
 ```
 
-### Part 4: concat as a silent intro (preferred) or overlay on the body
+### Part 4: xfade transition from intro into body
 
-Two implementation choices, with different feel:
-
-**Option A (preferred, v1.1+): STANDALONE SILENT INTRO.** Prepend the
-hook PNG as its own video segment for `HOOK_FRAME_DURATION` seconds.
-Body audio is delayed by the same amount via `adelay`. Captions are
-baked into the body before concat, so they don't play during the intro
-either. Result: viewer reads the headline in silence for 2-3 seconds,
-then the talking head begins with audio and captions in sync.
-
-**Option B (v1.0 legacy, ok for very short holds <1.5s): TIMELINE OVERLAY.**
-Overlay the hook PNG on top of the talking head for the first 1.5s
-with `enable='between(t,0,1.5)'`. Audio and captions play under the
-hook frame so the speaker is mid-sentence when the card disappears.
-Faster perceived pace; worse for hooks longer than 4-5 words because
-the viewer doesn't have time to read.
-
-The A/B trade-off: A is preferred when you want the viewer to fully
-process the headline before audio starts (the standard pro-clipper
-look). B is preferred when you want a tighter "drop-in" feel and the
-hook text is very short (e.g. 2-3 words).
-
-#### Option A: silent intro concat (preferred)
-
-Render the hook PNG with SOLID background (alpha 255) since it stands
-alone, not as an overlay. Feed it as an extra input with `-loop 1
--framerate 30 -t HOOK_FRAME_DURATION` so it arrives at the filter
-graph as a fixed-duration video stream. Then in the filter graph:
+The intro is a single PNG (composited from blurred bg + text) looped
+to `HOOK_FRAME_DURATION` seconds, cross-faded into the body via
+ffmpeg's `xfade` filter. The transition feels much more polished than
+a hard cut (which the old concat-only approach produced).
 
 ```python
-HOOK_FRAME_DURATION = 2.5  # seconds of silent hold
+HOOK_FRAME_DURATION = 2.5    # total intro duration
+HOOK_XFADE_DURATION = 0.5    # length of the cross-fade
 
 # Body: blur-bg + talking head + captions (if any)
 body = (
@@ -186,18 +233,26 @@ else:
     parts.append(";[clip_v]null[body]")
 parts.append(";[body]format=yuv420p,fps=30[body_norm]")
 
-# Hook intro: PNG already arrives as a HOOK_FRAME_DURATION-second video
-# (because of the -loop/-framerate/-t flags on its input). Just scale,
-# normalise the pixel format, then concat with the body.
 if has_hook_frame:
     hook_idx = 2 if has_captions else 1
     parts.append(
         f";[{hook_idx}:v]scale={W}:{H},format=yuv420p,fps=30,"
         "setpts=PTS-STARTPTS[hook_v]"
     )
-    parts.append(";[hook_v][body_norm]concat=n=2:v=1:a=0[outv]")
-    # Pad HOLD seconds of silence at the start of the body audio.
-    delay_ms = int(HOOK_FRAME_DURATION * 1000)
+    # xfade=offset is when the fade STARTS in the intro stream. With
+    # intro length = 2.5s and fade = 0.5s, offset = 2.0 means:
+    #   t=0..2.0   pure hook
+    #   t=2.0..2.5 hook fading out, body fading in
+    #   t=2.5..    pure body
+    # Total output duration = offset + body_duration = 2.0 + body_dur.
+    xfade_offset = HOOK_FRAME_DURATION - HOOK_XFADE_DURATION
+    parts.append(
+        f";[hook_v][body_norm]xfade=transition=fade:"
+        f"duration={HOOK_XFADE_DURATION:.2f}:offset={xfade_offset:.2f}[outv]"
+    )
+    # Body audio comes in at the START of the fade (offset), so the
+    # speaker's first word lands as the body becomes fully visible.
+    delay_ms = int(xfade_offset * 1000)
     parts.append(
         ";[0:a]aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS,"
         f"adelay={delay_ms}|{delay_ms}[outa]"
@@ -217,8 +272,6 @@ cmd = [
 if has_captions:
     cmd += ["-f", "concat", "-safe", "0", "-i", str(caption_concat_list)]
 if has_hook_frame:
-    # Crucially: -loop 1 -framerate 30 -t makes the PNG arrive as a
-    # HOOK_FRAME_DURATION-second 30fps stream.
     cmd += [
         "-loop", "1",
         "-framerate", "30",
@@ -232,44 +285,40 @@ cmd += [
 ]
 ```
 
-Total output duration becomes `HOOK_FRAME_DURATION + body_duration`. The
-hook frame is ONE concat input regardless of how many caption switches
-happen in the body. Filter graph stays small.
+The complete intro flow:
 
-#### Option B: timeline-gated overlay (legacy)
-
-Render the hook PNG with SEMI-OPAQUE background (alpha ~200/255) so a
-sliver of the talking head shows through. Overlay it for the first
-1.5s of the body via `enable='between(t,0,1.5)'`. Audio and captions
-play through the overlay unchanged. Useful for tight 2-3 word hooks
-where reading time isn't a concern.
-
-```python
-HOOK_FRAME_DURATION = 1.5  # short hold; audio runs underneath
-
-# Stack hook on top of (captions on top of (talking head))
-parts.append(
-    f";{layered}[{hook_idx}:v]"
-    f"overlay=0:0:enable='between(t,0,{HOOK_FRAME_DURATION:.2f})'[clip_hooked]"
-)
-```
+1. Pre-extract one source frame via `ffmpeg -ss bg_ts -frames:v 1`
+   from inside the clip (e.g. clip_start + duration*0.30).
+2. `render_hook_frame_png(text, ..., bg_frame_png=bg_path)` produces
+   the composited intro PNG (blurred bg + text on top).
+3. Feed that PNG as `-loop 1 -framerate 30 -t HOOK_FRAME_DURATION`.
+4. xfade in the filter graph blends intro -> body over the last
+   HOOK_XFADE_DURATION seconds of the intro.
+5. Body audio is `adelay`'d by `HOOK_FRAME_DURATION - HOOK_XFADE_DURATION`
+   so the first word lands when the body is fully visible.
 
 ## Verification
 
 Visually:
-- Card holds for 1.5-1.7s at the start, then disappears cleanly to
-  reveal the talking head + captions underneath.
-- The text is the rephrased host question for guest clips; the
-  speaker's own hook for host clips.
-- Numbers, proper nouns, and acronyms in the card text appear in yellow
-  against white.
+- Intro holds with text on the blurred bg for ~2s, then cross-fades
+  over 0.5s into the unblurred body.
+- Background is the studio/scene of the clip, heavily blurred and
+  darkened so the foreground text is the clear focal point.
+- Text is the rephrased host question for guest clips; the topic for
+  host-only clips; the speaker's hook only as a last resort.
+- Numbers, proper nouns, and acronyms in the text appear yellow.
+- No headline ever clips the canvas edges - the auto-shrink loop
+  guarantees this for any input.
 
 Programmatically:
-- `ffprobe -show_entries format=duration` matches `clip_end - clip_start`
-  (lead-out included) within 50ms.
-- Filter graph node count stays at 3 overlay nodes total (blur-bg main,
-  captions, hook), independent of caption cue count.
-- Hook frame PNG is ~50-150 KB (mostly-transparent + bold text compresses well).
+- Grab a frame at `t = HOOK_FRAME_DURATION - HOOK_XFADE_DURATION/2`
+  (the middle of the fade). You should see BOTH layers - text partly
+  transparent, body partly transparent. If you see only text or only
+  body, xfade is misconfigured.
+- For every wrapped headline line, assert `font.getlength(line) <=
+  max_text_w`. The auto-shrink loop guarantees this.
+- Total output duration is `xfade_offset + body_duration`, not
+  `HOOK_FRAME_DURATION + body_duration` (xfade overlaps the streams).
 
 ## Example
 
@@ -290,21 +339,27 @@ the clip's own `hook` field. Both fallbacks landed.
 
 ## Notes
 
-- The hook card OBSCURES the talking head and any captions underneath
-  for its duration. That's intentional - the whole frame is the
-  headline, not a small banner. The viewer reads, the audio starts
-  primed, the card fades and the speaker appears.
-- The card backdrop is semi-opaque (alpha 200/255) rather than fully
-  black so a sliver of the talking head shows through, which feels less
-  jarring than a hard cut from black to face. Adjust HOOK_BG_ALPHA to
-  taste.
-- Animation (fade-in, fade-out, scale-bounce) is intentionally OMITTED.
-  A static 1.6s hold with a hard appear/disappear is what most viral
-  podcast clippers do. Animation can be added with the `fade` filter
-  but adds complexity for marginal gain.
-- For clips where `preceding_question` is empty AND `hook` starts with
-  a hedge ("I think", "you know"), consider rephrasing the hook to a
-  question in a post-process step before rendering. Out of scope for v1.
+- The hook intro is a STANDALONE segment, not an overlay. The body
+  isn't visible (just its blurred essence) during the solid hold. This
+  matters because captions are baked into the body before concat -
+  so they don't compete with the headline during the intro, then come
+  alive cleanly when the body fades in.
+- Background blur sigma (30) and brightness (0.35) are tuned for
+  legibility against bright-yellow keyword highlights on white text.
+  Adjust both together: a lighter bg needs lower brightness or you'll
+  lose contrast.
+- Why xfade and not concat: concat hard-cuts from intro to body, which
+  looks abrupt. xfade dissolves over HOOK_XFADE_DURATION seconds.
+  Cost: 0.5s of effective intro is "lost" to the fade overlap, so the
+  pure-hook hold is 2.0s instead of 2.5s. Worth it.
+- The bg frame is sampled at clip_start + duration*0.30 by default.
+  At t=0 the speaker is often mid-blink or carrying a transitional
+  expression from the host's question; 30% in is more representative.
+- A "very long single word" (PROCRASTINATION, MANOSPHERE,
+  ENTREPRENEURSHIP) cannot be broken across lines and will trigger
+  the horizontal auto-shrink. If the word still doesn't fit at the
+  60pt floor, consider rephrasing it in the LLM prompt (e.g.
+  "manosphere wrong solution" -> "what's wrong with the manosphere").
 
 ## Related skills
 

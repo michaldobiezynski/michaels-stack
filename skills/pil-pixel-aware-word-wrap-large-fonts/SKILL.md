@@ -2,18 +2,23 @@
 name: pil-pixel-aware-word-wrap-large-fonts
 description: |
   Fix for text bleeding off the edge of a PIL-rendered canvas when using
-  textwrap.wrap with large fonts (60pt+) or all-caps headlines. Use when:
+  textwrap.wrap with large fonts (60pt+) or all-caps headlines, AND the
+  follow-up case where pixel-aware wrap alone still overflows because
+  (a) too many wrapped lines exceed the canvas height, or (b) a single
+  word is wider than the safe area on its own. Use when:
   (1) leading or trailing characters of a wrapped line clip past the
   canvas edge, (2) you're rendering vertical Shorts hook frames, title
   cards, lower thirds, or end cards with PIL, (3) you call
   _draw_centred_line (or similar) which computes x = (W - line_width) // 2
-  and the line is wider than W so x goes negative. The root cause is
-  always the same: textwrap.wrap counts characters, but at 110pt all-caps
-  black weight, 14 characters of W/M/K easily exceed 1080px even though
-  "ililili" of the same length is half as wide. Fix: greedy word-wrap
-  by font.getlength() pixel width, not character count.
+  and the line is wider than W so x goes negative, (4) the fallback text
+  is too long and wraps to 10+ lines, bleeding off the top or bottom
+  of the canvas, (5) a single long word (PROCRASTINATION, MANOSPHERE)
+  is wider than max_text_w and overhangs even after pixel-aware wrap.
+  The root fix is layered: (i) pixel-aware wrap via font.getlength()
+  instead of textwrap.wrap, then (ii) auto-shrink the font until BOTH
+  block height and widest line fit the canvas.
 author: Claude Code
-version: 1.0.0
+version: 1.1.0
 date: 2026-05-13
 ---
 
@@ -112,6 +117,88 @@ Pick the side margin so that even the widest legitimate line of text
 has visible breathing room from the edge. 60-90px on a 1080px-wide
 canvas is a sensible default for large headlines; narrow it for tighter
 designs.
+
+### Step 2: auto-shrink the font for the two leftover cases
+
+Pixel-aware wrap alone catches the common case (long phrase, wraps
+across many lines, each line individually fits the width). It does
+NOT catch:
+
+- **Vertical overflow**: a long fallback string (e.g. a 20-word
+  speaker's hook used because the LLM left the punchy headline field
+  empty) wraps to 10+ lines and bleeds off the top and bottom of the
+  canvas. The wrap helper produces correct per-line widths but the
+  total block height exceeds H - 2*vert_margin.
+- **Single oversized word**: a single token like `PROCRASTINATION`,
+  `MANOSPHERE`, or `ENTREPRENEURSHIP` is wider than max_text_w on
+  its own. `wrap_by_pixel_width` keeps it on its own line (better
+  than dropping content) and lets it overhang the canvas. The wrap
+  helper cannot fix this because there's nowhere to break it.
+
+Both are fixed by an auto-shrink loop that tries the maximum font
+size first and steps down until both dimensions fit:
+
+```python
+FONT_SIZE_MAX = 110
+FONT_SIZE_MIN = 60
+SIDE_MARGIN = 90
+VERT_MARGIN = 160
+
+max_text_w = W - 2 * SIDE_MARGIN
+max_block_h = H - 2 * VERT_MARGIN
+
+size = FONT_SIZE_MAX
+while True:
+    font = ImageFont.truetype(font_path, size)
+    wrapped = wrap_by_pixel_width(text, font, max_text_w) or [text]
+    ascent, descent = font.getmetrics()
+    line_height = int((ascent + descent) * 1.05)
+    block_h = line_height * len(wrapped)
+    widest = max((font.getlength(L) for L in wrapped), default=0)
+    fits_vert = block_h <= max_block_h
+    fits_horiz = widest <= max_text_w  # catches the oversized-single-word case
+    if (fits_vert and fits_horiz) or size <= FONT_SIZE_MIN:
+        break
+    size -= 10
+```
+
+Why a step-down loop instead of math: PIL fonts don't scale linearly
+in width-at-a-given-text. A 110pt font that just barely overflows
+might fit at 100pt or might still overflow at 90pt depending on which
+glyphs the wrap helper kept on the widest line. A 10pt step finds the
+largest size that fits, which is what you want for readability.
+
+Also remember to **scale the stroke width with the font**, otherwise
+shrunk text gets disproportionately heavy outlines:
+
+```python
+stroke_w = max(4, int(STROKE_WIDTH_MAX * size / FONT_SIZE_MAX))
+```
+
+### Step 3: prefer always-bounded fields in fallback chains
+
+The auto-shrink is belt-and-braces. The cleaner fix is to AVOID
+hitting it in the first place by ordering your fallback chain so the
+always-bounded option comes BEFORE the maybe-unbounded one.
+
+Example: a clip-rendering pipeline picks the hook text via
+`preceding_question -> hook -> topic`. Intuitively the speaker's own
+`hook` is "higher quality" than the topic label. But `hook` is a full
+sentence (10-25 words); `topic` is constrained to <=6 words by the
+prompt. So pick `topic` over `hook`:
+
+```python
+# WRONG: order by perceived quality
+return preceding_question or hook or topic
+
+# RIGHT: order by guarantee-of-fit, with auto-shrink as last resort
+return preceding_question or topic or hook
+```
+
+The general principle: **in a fallback chain that feeds a fixed-size
+canvas, order options by upper-bound on size, not by quality**. The
+auto-shrink will save you when none of the bounded options exist,
+but for the common case it's better to never need it.
 
 ## Verification
 
