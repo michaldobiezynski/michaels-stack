@@ -16,10 +16,13 @@ description: |
   Covers: hook text selection with a fallback chain that prefers
   always-bounded fields over maybe-unbounded ones (preceding_question
   -> topic -> hook), PIL rendering at 100+pt with auto-shrink-to-fit
-  in BOTH dimensions, blurred-frame compositing as background, and
-  ffmpeg xfade as the transition into the body.
+  in BOTH dimensions, blurred-frame compositing as background, ffmpeg
+  xfade as the transition into the body, the topic-as-curiosity-gap
+  rule that the LLM must obey, and Paddy-Galloway-style upload
+  metadata fields (publishable_title / tiktok_caption / hashtags) that
+  ride alongside the on-screen text in the same LLM pass.
 author: Claude Code
-version: 1.2.0
+version: 1.3.0
 date: 2026-05-13
 ---
 
@@ -113,6 +116,56 @@ cleanly. Order the fallback chain by guarantee-of-fit, not by what
 "feels" higher quality - the renderer has an auto-shrink guard for
 the hook-fallback case, but picking short text up front avoids the
 guard entirely and produces a more readable card.
+
+**Constraint on the `topic` field itself - curiosity gap, not summary.**
+Because `topic` is the on-screen fallback, prompt the LLM to phrase it
+as a CURIOSITY GAP, not a Wikipedia-section-heading. Strong topics
+have contradiction, a named anchor, a specific number, or an open
+question. WEAK topics summarise the conversation:
+
+- BAD (summary): "True equality", "Resilience and pity", "Choosing a partner's Tuesday"
+- GOOD (curiosity gap): "Why partners hate themselves", "10 years of therapy",
+  "Hunter Biden's self-awareness", "Choose your shit sandwich"
+
+A summary topic produces a hook frame that DESCRIBES rather than
+TEASES; on the FYP that's a scroll. Add this constraint explicitly
+to the prompt's `topic` field description.
+
+### Part 1.5: upload-metadata fields (Paddy Galloway pattern)
+
+The on-screen hook frame is one piece of "packaging"; the upload title
++ caption + hashtags is the other. Add three fields to the per-clip
+JSON contract so the LLM produces them in the same pass as the clip
+selection - cheaper than a second LLM call later, and the LLM has the
+clip context fresh:
+
+```
+"publishable_title": string,
+// Upload title for YouTube Shorts / TikTok / Reels. Different from
+// `topic` (short on-screen overlay text) - this is the longer caption
+// in the post's title field. Max 70 chars. Must create a curiosity gap
+// the clip's payoff resolves. Strong patterns:
+//   "Why X does Y" / "The truth about X" / "X people don't realise Y"
+// Honest to the clip, not clickbait.
+
+"tiktok_caption": string,
+// Body copy under the title, above hashtags. One or two short sentences
+// restating the hook as a teaser. Max 150 chars. No emojis. No leading
+// hashtags (those go in `hashtags`).
+
+"hashtags": [string],
+// 3-5 lowercase tags WITHOUT the leading "#". Mix one broad
+// (psychology, relationships, podcast) with two-three specific tags
+// from the clip's content (manson, modernwisdom, dating). Each tag
+// <=20 chars, no spaces, no special chars. The poster adds the # at
+// post time.
+```
+
+These fields don't render onto the video - they ride in the
+`shorts_manifest.json` so the poster can paste them into the upload UI
+for each clip. The manifest writer (in the shorts pipeline) uses
+`{**clip, "order": i, "file": out.name}` to spread the clip JSON into
+the manifest entry, so new fields flow through with no code change.
 
 ### Part 3: render the PNG with auto-shrink + blurred background
 
