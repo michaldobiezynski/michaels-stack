@@ -140,6 +140,7 @@ When the user wants a glassmorphism aesthetic, include this CSS utility class in
     pointer-events: none;
   }
   .liquid-glass-strong {
+    /* Same as liquid-glass but with stronger blur and shadows */
     backdrop-filter: blur(50px);
     box-shadow: 4px 4px 4px rgba(0,0,0,0.05), inset 0 1px 1px rgba(255,255,255,0.15);
   }
@@ -245,10 +246,13 @@ Uses IntersectionObserver. Each word animates from `filter: blur(10px)` to `blur
 
 **Infinite marquee**
 ```js
+// tailwind.config.ts keyframes
 marquee: {
   "0%": { transform: "translateX(0%)" },
   "100%": { transform: "translateX(-50%)" }
 }
+// Duplicate the array for seamless looping
+// Animation: marquee 20s linear infinite
 ```
 
 ### Step 5: List Dependencies
