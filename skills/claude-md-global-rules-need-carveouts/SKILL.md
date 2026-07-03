@@ -76,6 +76,18 @@ exists."
 - Dial back CRITICAL/MUST emphasis generally — current models overtrigger on aggressive
   language written for older, less-compliant models.
 
+## Compressing an oversized CLAUDE.md
+
+Worked examples are the cheapest cut: models don't need a good/bad pair to follow a
+one-sentence rule, so a 559-line file compresses to ~180 by deleting examples and
+collapsing multi-bullet elaborations into dense sentences (rules survive, prose doesn't).
+Verify the compression with a fresh-context reviewer doing a rule-by-rule diff of old vs
+new, restricted to three finding types: LOST RULE (behavioural instruction with no
+equivalent), MEANING DRIFT (stronger/weaker/narrower in a behaviour-changing way), and
+BROKEN REFERENCE. In the originating session this review caught a silently-dropped
+guard on a destructive action (confirm before deleting remote branches on shared repos)
+that self-review missed. Keep the old version reachable in git so the diff is trivial.
+
 ## References
 
 - https://code.claude.com/docs/en/best-practices (concise CLAUDE.md, evidence-based done, fresh-context review)
