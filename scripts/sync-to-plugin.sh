@@ -23,6 +23,11 @@ echo "  Commands synced"
 rsync -a --delete "$CLAUDE_DIR/rules/" "$PLUGIN_DIR/rules/"
 echo "  Rules synced"
 
+if [[ -d "$CLAUDE_DIR/reference" ]]; then
+    rsync -a --delete "$CLAUDE_DIR/reference/" "$PLUGIN_DIR/reference/"
+    echo "  Reference synced"
+fi
+
 for script in claudeception-activator.sh spec-reminder.sh test-stream-check.sh; do
     if [[ -f "$CLAUDE_DIR/hooks/$script" ]]; then
         cp "$CLAUDE_DIR/hooks/$script" "$PLUGIN_DIR/scripts/$script"
