@@ -60,7 +60,7 @@ After receiving answers, confirm your understanding:
 Once confirmed, proceed with:
 1. Brief implementation plan
 2. Code implementation
-3. Suggestions for testing
+3. Tests written and run per the Quality Bar's definition of done
 
 ### Question Quality
 
@@ -78,6 +78,7 @@ Once confirmed, proceed with:
 - Task is trivially simple and unambiguous
 - Following up on already-clarified work
 - Explicitly told "just do it" or given exhaustive specs
+- Running non-interactively (subagent, workflow stage, scheduled or loop run) where nobody can answer: state your assumptions at the top of the work and proceed with the most defensible interpretation
 
 ### Example Interaction
 
@@ -94,11 +95,130 @@ Once you clarify, I'll outline the approach and implement it.
 
 ---
 
+## Quality Bar (Anti-Slop)
+
+Unverified, over-built, or generic output is the primary failure mode of coding agents. These rules apply to every task and every model tier.
+
+### Definition of done
+- A change with a runtime surface is done when you have exercised it and observed the result, not when the code looks right. Run the relevant tests or drive the affected flow (the `/verify` and `/run` skills do this), and report the exact command and output you observed. Changes with no runtime surface (docs, comments, renames, pure test edits) are exempt: state what you changed and run the cheap static check where one exists (build, lint, typecheck).
+- Never report success from reading or editing alone. If you could not run the check, say so explicitly and why.
+- Before reporting progress, audit each claim against a tool result from this session. If tests fail, say so with the output; if a step was skipped, say that.
+
+### Scope discipline
+- Only make changes that are directly requested or clearly necessary. Don't refactor or "improve" beyond what was asked; don't add comments or type annotations to code you didn't change; don't add error handling for scenarios that can't happen; don't create helpers or abstractions for one-time operations. The right amount of complexity is the minimum the task needs. Worthwhile adjacent work: suggest it, don't do it.
+- Write general-purpose solutions, not ones that merely pass the given tests. Never hard-code values or special-case code to make a test pass; if a test looks wrong or the task infeasible, say so instead of working around it.
+
+### Fresh-context review
+- For a diff that touches product logic and whose correctness is not self-evident from reading it, have a fresh-context subagent review it against the requirements before treating the task as done. Skip the review for docs-, config-, test-, comment-, or rename-only diffs and small obviously-correct changes. The reviewer sees only the diff and the acceptance criteria, not the reasoning that produced it, and flags only gaps affecting correctness or stated requirements. If you are yourself a subagent and cannot spawn a reviewer, re-read the diff cold against the criteria and note that no independent review ran.
+- Triage review findings instead of implementing them all: action only findings with a concrete, reachable failure scenario. Chasing every finding produces defensive-code slop.
+
+### Taste
+- Frontend and design: don't default to generic AI aesthetics (Inter/Roboto/Arial/system fonts, purple gradients on white, timid evenly-distributed palettes, cookie-cutter layouts) — unless the project's existing design system uses them, in which case matching it wins. Commit to a cohesive theme with dominant colours and sharp accents. For open-ended briefs, propose 3-4 distinct visual directions and let the user pick before building; running non-interactively, pick the most defensible direction, state it, and proceed.
+- Writing (generated prose and user-facing copy; not code identifiers, product names, or quoted material): no filler transitions ('Let's dive in', 'Here's the thing'), no hollow intensifiers (seamless, game-changer, cutting-edge, transformative) where they add no information, no reflexive 'It's not X, it's Y' contrast devices. Say the concrete thing; a listed word is fine when literally accurate ('seamless failover').
+
+---
+
+## Model Delegation for Workflows & Subagents
+
+This section governs which model to request when spawning subagents (Agent tool `model` parameter) or workflow stages (Workflow `agent()` with `opts.model` / `opts.effort`). It does not change the main conversation's model. Keep token-hungry work out of the main context.
+
+### Model ratings
+
+Rankings, higher = better. **Cost** is relative token spend (API list price in/out per MTok shown for reference; higher score = cheaper). **Intelligence** is how hard a problem you can hand the model unsupervised. **Taste** covers UI/UX, code quality, API design, and copy. Correct as of 07/2026.
+
+| Model | Cost | Intelligence | Taste | List price |
+| --- | --- | --- | --- | --- |
+| `haiku` | 9 | 3 | 3 | $1 / $5 |
+| `sonnet` | 6 | 5 | 7 | $3 / $15 |
+| `opus` | 4 | 7 | 8 | $5 / $25 |
+| omit → inherits session model (Fable) | 2 | 9 | 9 | $10 / $50 |
+
+### How to apply
+
+- **These are defaults, not limits.** You have standing permission to override them: if a cheaper model's output doesn't meet the bar, rerun or redo the work with a smarter model without asking — note in one sentence that you escalated and why. Judge the output, not the price tag. Escalating costs less than shipping mediocre work. The same discipline runs downward: don't start at the top tier because a task sounds hard; route by the table and escalate on observed output.
+- **Cost is a tie-breaker only.** When axes conflict for anything that ships, intelligence > taste > cost.
+- **Bulk mechanical work** (file inventories, grep-style sweeps, log trawls, format conversion, simple extraction, high-volume worker agents): `haiku` with `effort: 'low'`. Haiku is below the bar for anything that ships or requires judgement.
+- **Anything user-facing** (UI, copy, API design, docs) needs taste ≥ 7: `sonnet` minimum, prefer `opus`.
+- **Default worker tier** (codebase analysis and exploration, code generation, computer-use and browser sessions, documentation research, test writing): `sonnet`. Never `haiku` for vision-heavy work.
+- **Reviews of plans and implementations** (adversarial verification, judge and synthesis stages, security review, tricky debugging): `opus`, and never a lower tier than the model that authored the work — reviewing down tends to miss what the author missed. Omit the model (inherit Fable) when the subagent's judgement must match the main loop's, e.g. final pre-merge verification or user-facing synthesis.
+- **Verify subagent output before building on it.** Never accept a worker's success claim at face value: spot-check the artefact it says it produced (the file exists, the tests pass, the change is present). Distilled summaries are inputs to verify, not proof.
+- **Delegate deliberately.** Spawn subagents for parallelisable, context-isolated, or token-hungry work; for single-file edits or sequential steps that need shared context, work directly instead.
+- Pair the model choice with `effort`: `'low'` for mechanical stages, `high`/`xhigh` for verify and judge stages. To pin a model deterministically for a specific agent type, set `model:` in that agent's `.claude/agents/*.md` frontmatter instead of relying on per-call overrides.
+
+### Offload token-hungry work to subagents
+
+Work that burns tokens as raw I/O rather than reasoning MUST run inside a subagent on a cheaper model, which reports a distilled summary back to the main conversation:
+
+- **Computer use / browser automation** (screenshots are enormous): a `sonnet` subagent drives the computer-use or agent-browser tools and returns only what it saw and did. Do not use `haiku` for vision-heavy work.
+- **Codebase analysis / broad file reading**: Explore or general-purpose agents on `haiku`/`sonnet`; return findings as `file:line` references plus conclusions, never raw file dumps.
+- **Web research and documentation sweeps**: `haiku`/`sonnet` fan-out; return structured summaries with sources.
+
+Keep reasoning-dense, low-volume work (final synthesis, design trade-offs, decisions needing full conversation context) in the main loop. Subagent results must come back as compact structured summaries, not transcripts.
+
+---
+
+## Response Formatting
+
+Always structure responses for readability in the Claude Code terminal, even short ones. The goal is to make output scannable: clear sections, visible boundaries, highlighted keywords, copy-pasteable commands.
+
+### Rules
+
+1. **Headers**: Use `##` for major sections and `###` for sub-sections. Every response covering more than one topic gets section headers. Single-topic answers lead with `## TL;DR` (or a more specific header like `## Answer`, `## Fix`, `## Verdict`).
+
+2. **Dividers**: Use a horizontal rule (`---`) between major sections of a longer response. Do not use dividers within a section.
+
+3. **Bold for emphasis**: Wrap key terms, decisions, file names in prose, and column labels in `**bold**`. Never bold whole sentences or paragraphs.
+
+4. **Code blocks for commands**: Every shell command, code snippet, configuration fragment, or multi-token path goes in a fenced code block with a language hint:
+   - ` ```bash ` for shell commands
+   - ` ```typescript `, ` ```python `, ` ```rust `, etc. for code
+   - ` ```json `, ` ```yaml `, ` ```toml ` for config
+   - Use inline `` `code` `` for short identifiers, single file names, env vars, flags, function names
+
+5. **Tables for comparisons**: Any comparison of three or more items uses a markdown table with bold column headers. Two items can stay prose.
+
+6. **Lists**: Use bullets only when content is genuinely list-shaped (three or more parallel items). Do not bulletise flowing prose.
+
+7. **Confidence labels**: Mark non-trivial claims with bolded **High**, **Moderate**, **Low**, or **Unknown** confidence labels inline, so the user can tell what is verified versus inferred.
+
+8. **No emoji** unless the user explicitly requests them.
+
+9. **Blockquotes**: Use `>` only for quoting external sources (user messages, docs, errors). Do not use blockquotes as "important callout" boxes; bolding handles that.
+
+10. **File references**: When pointing to source code, use the `path/to/file.ts:42` pattern so the terminal can make it clickable.
+
+### Structural template for non-trivial answers
+
+```
+## TL;DR
+One or two sentences with the answer and confidence label.
+
+## Context (if needed)
+What the question depends on, assumptions made.
+
+## <Substance section>
+The actual content, with sub-sections as needed.
+
+---
+
+## Next step
+What I am about to do, or what the user should decide.
+```
+
+### What not to do
+
+- Do not open with praise, restatement, or filler ("Great question", "Let me think through this").
+- Do not pad with disclaimers or moralising the user did not request.
+- Do not use em-dashes; prefer commas, semicolons, parentheses, or full stops.
+- Do not use ASCII boxes, banner separators (`===`, `***`), or unicode art for emphasis; rely on markdown.
+
+---
+
 ## Documentation & Learning Resources
 
 When working with technologies, frameworks, or libraries (Erlang, Elixir, Kafka, Terraform, CloudFormation, Go, Python, TypeScript, React, etc.), use the Context7 MCP tool to access official documentation.
 
-**Always consult Context7 for:**
+**Consult Context7 for:**
 - API references and best practices for the technologies being used
 - Configuration options and proper usage patterns
 - Framework-specific conventions and idioms
@@ -107,6 +227,7 @@ When working with technologies, frameworks, or libraries (Erlang, Elixir, Kafka,
 **Guidelines:**
 - Use Context7 proactively when you need to verify implementation details or explore framework capabilities
 - Prefer official documentation from Context7 over relying on training data that may be outdated
+- If Context7 is not connected or lacks the library, fall back to WebFetch of the official docs and verify against the project's installed dependency version
 - When suggesting solutions, reference the documentation you've consulted to provide context
 
 ---
@@ -132,7 +253,7 @@ Always use British English spelling, grammar, and conventions in all code commen
   - aluminium (not aluminum)
 
 ### Punctuation
-- Use single quotation marks for strings and text where appropriate
+- In prose and documentation, prefer single quotation marks. In code, follow the language or formatter convention (JSON and Prettier require double quotes); never override a formatter for style
 - Place punctuation logically (outside quotes unless part of quoted material)
 
 ### Date Formatting
@@ -354,60 +475,15 @@ Always maintain consistency with the library's design system and patterns.
 
 ---
 
+## Branch Cleanup After Merging PRs
+
+After a PR merges, delete its branch locally and on the remote (`gh pr merge <n> --squash --delete-branch`, then `git branch -D` + `git fetch --prune`). Squash-merge gotcha: `git branch -d` and `--merged` misreport squash-merged branches — confirm the merge by content first, then force-delete. Never `git branch -D` a branch that adds a file `master` lacks. Full recipe: the `delete-merged-branches-local-and-remote` skill.
+
+---
+
 ## Pull Request Review
 
-When reviewing pull requests, follow this structured approach:
-
-### Review Checklist
-
-#### 1. Bug Prevention & Code Correctness
-- **Logic errors**: Check for off-by-one errors, incorrect conditionals, missing edge cases
-- **Null/undefined handling**: Verify proper null checks and error handling
-- **Race conditions**: Look for potential concurrency issues, async/await problems
-- **Memory leaks**: Check for unclosed resources, event listeners, subscriptions
-- **Type safety**: Ensure types are correct and used consistently
-- **Error handling**: Verify try-catch blocks, error propagation, and user-facing error messages
-
-#### 2. Code Structure & Quality
-- **Single Responsibility**: Each function/class should do one thing well
-- **DRY principle**: Identify and flag code duplication
-- **Naming conventions**: Check for clear, descriptive variable and function names
-- **Function length**: Flag functions longer than 50 lines for potential refactoring
-- **Complexity**: Identify overly complex logic that could be simplified
-
-#### 3. Testing Requirements
-- **Test coverage**: Verify tests exist for new functionality
-- **Edge cases**: Ensure tests cover edge cases and error scenarios
-- **Test quality**: Review test names, assertions, and maintainability
-- **Mocking**: Ensure external dependencies are properly mocked
-
-#### 4. Repository Standards
-- **Code style**: Check adherence to linting rules and formatting conventions
-- **File organisation**: Verify files are in correct directories following project structure
-- **Import statements**: Check for unused imports, correct import paths
-- **Dependencies**: Flag new dependencies that might be unnecessary
-
-#### 5. Performance & Security
-- **Performance**: Identify potential bottlenecks, expensive operations in loops
-- **Security**: Check for SQL injection, XSS, hardcoded secrets, insecure dependencies
-- **Data validation**: Ensure user input is validated and sanitised
-- **Authentication/Authorisation**: Verify access controls are in place
-
-### Output Format
-
-Structure reviews as:
-
-**🔴 Critical Issues** (must fix before merge)
-- Issue description with specific location and suggested fix
-
-**🟡 Major Issues** (should fix before merge)
-- Issue description with specific location and suggested fix
-
-**🔵 Minor Issues / Suggestions** (nice to have)
-- Issue description with specific location and suggested fix
-
-**✅ Positive Notes**
-- Call out well-implemented patterns or improvements
+Use the `/feature-review` skill (two-round: multi-lens review, then adversarial verification of every finding) or `/code-review`. Report findings as **Critical** / **Major** / **Minor** / **Positive Notes**, each with a specific location and suggested fix, and verify findings against the source before actioning them.
 
 ---
 
@@ -426,123 +502,15 @@ For each task, follow this workflow:
 - Document actions taken for traceability
 
 ### 3. Validation
-- Verify results against intended outcomes
-- Check for completeness, correctness, and consistency
-- Identify discrepancies or areas needing improvement
-- Re-plan and address issues before proceeding if found
-
-**Guidelines:**
-- Never skip validation
-- Re-plan if any step fails validation
-- Ensure clarity, completeness, and accuracy before presenting a final answer
-- If context or instructions are unclear, explicitly state the uncertainty and suggest a plan to resolve it
+- For code changes, apply the Quality Bar's definition of done: exercise the change end-to-end and report the command and output you observed; for non-code deliverables, check the result against the intended outcome for completeness and correctness
+- Re-plan and address issues before proceeding if any step fails validation
+- If context or instructions are unclear, state the uncertainty explicitly rather than guessing
 
 ---
 
-## React Component Structure
+## React Components
 
-When creating React components, follow this structure:
-
-### Import Organisation
-```typescript
-// 1. External library imports first
-import { Button } from 'antd';
-// 2. Icon imports from specific libraries
-import { PlusOutlined, MinusOutlined } from '@ant-design/icons';
-// 3. Local CSS modules
-import styles from '../ComponentName.module.css';
-// 4. Type imports from relative paths
-import { TypeName } from '../hooks/useHookName';
-```
-
-### Component Structure Template
-```typescript
-interface ComponentNameProps {
-    propName: string;
-    record: ObjectType;
-    isExpanded: boolean;
-    onToggleExpansion: () => void;
-}
-
-const ComponentName = ({
-    propName,
-    record,
-    isExpanded,
-    onToggleExpansion,
-}: ComponentNameProps) => {
-    // 1. EARLY DATA EXTRACTION
-    const { dataArray } = record;
-    const hasData = dataArray.length > 0;
-    const hasMultipleItems = dataArray.length > 1;
-
-    // 2. HELPER FUNCTIONS
-    const getVisibleItems = () => {
-        return isExpanded ? dataArray : dataArray.slice(0, 1);
-    };
-
-    const getHiddenItemCount = () => {
-        return dataArray.length - 1;
-    };
-
-    const shouldShowItemCount = (index: number) => {
-        return index === 0 && !isExpanded && hasMultipleItems;
-    };
-
-    // 3. RENDER FUNCTIONS
-    const renderItemCount = () => (
-        <span className={styles.itemCount}>
-            {' '}
-            +{getHiddenItemCount()}
-        </span>
-    );
-
-    const renderItemList = () => (
-        <ul className={styles.itemsList}>
-            {getVisibleItems().map((item, index) => (
-                <li key={`${item}-${index}`} className={styles.item}>
-                    {item}
-                    {shouldShowItemCount(index) && renderItemCount()}
-                </li>
-            ))}
-        </ul>
-    );
-
-    const renderExpandButton = () => (
-        <Button
-            type="text"
-            size="small"
-            icon={isExpanded ? <MinusOutlined /> : <PlusOutlined />}
-            onClick={onToggleExpansion}
-            className={styles.expandButton}
-            data-testid="expand-button"
-        />
-    );
-
-    // 4. MAIN RETURN
-    return (
-        <div data-testid="component-name" className={styles.container}>
-            <div className={styles.contentContainer}>
-                <div className={styles.nameContainer}>
-                    <div>{propName}</div>
-                </div>
-                {hasData && renderItemList()}
-            </div>
-            {hasMultipleItems && renderExpandButton()}
-        </div>
-    );
-};
-
-export default ComponentName;
-```
-
-### Key Rules
-
-1. **Interface Naming**: Create TypeScript interface ending with "Props" before component
-2. **Component Organisation**: Data extraction → Helper functions → Render functions → Main return
-3. **Variable Naming**: Use descriptive booleans (`hasData`, `isVisible`), camelCase throughout
-4. **Function Patterns**: Helper functions should be pure; render functions return JSX
-5. **JSX Patterns**: Use conditional rendering with `&&`, always include `data-testid`
-6. **CSS**: Import as `styles`, use descriptive class names with `styles.className`
+Match the project's existing component patterns and UI library — do not impose a fixed template. Where the project has no established convention: name the props interface `<Component>Props`; organise components as data extraction → helper functions → render functions → main return; use descriptive booleans (`hasData`, `isExpanded`); always include `data-testid`. Full annotated template: `~/.claude/reference/react-component-structure.md` (read on demand).
 
 ---
 
@@ -578,7 +546,7 @@ export default ComponentName;
 
 1. Don't suggest alternative approaches unless the requested solution has critical flaws
 2. Don't include tutorial-style explanations of basic concepts
-3. Don't add testing code unless specifically requested
+3. For throwaway snippets or explicitly spec-frozen tasks, skip tests; otherwise add or update tests covering the new behaviour and run them
 4. Don't implement features beyond the scope of the request
 5. Don't use deprecated libraries or techniques
 
@@ -588,129 +556,4 @@ If requirements are unclear, ask specific questions focused on implementation de
 
 ## Agent Browser Usage
 
-### Overview
-
-Use `agent-browser` for all browser automation tasks. This CLI tool is optimised for AI agents with minimal context usage through the Snapshot + Refs workflow.
-
-### When to Use
-
-- Web scraping or data extraction
-- Form filling and submission
-- UI testing and verification
-- Screenshot capture
-- Authentication flows
-- Any task requiring browser interaction
-
-### Core Workflow
-
-Always follow this pattern:
-
-1. **Open** - Navigate to the target URL
-2. **Snapshot** - Get interactive elements with refs
-3. **Interact** - Use refs (@e1, @e2) for actions
-4. **Re-snapshot** - After page changes, get fresh refs
-
-```bash
-agent-browser open <url>
-agent-browser snapshot -i
-agent-browser click @e2
-agent-browser snapshot -i  # After navigation/changes
-```
-
-### Essential Commands
-
-#### Navigation
-```bash
-agent-browser open <url>          # Navigate to URL
-agent-browser back                # Go back
-agent-browser forward             # Go forward
-agent-browser reload              # Reload page
-```
-
-#### Snapshots
-```bash
-agent-browser snapshot -i         # Interactive elements only (preferred)
-agent-browser snapshot -i --json  # JSON output for parsing
-agent-browser snapshot            # Full accessibility tree
-```
-
-#### Interaction
-```bash
-agent-browser click @e1           # Click element by ref
-agent-browser fill @e2 "text"     # Clear and fill input
-agent-browser type @e2 "text"     # Type without clearing
-agent-browser press Enter         # Press key
-agent-browser select @e3 "value"  # Select dropdown option
-agent-browser check @e4           # Check checkbox
-agent-browser uncheck @e4         # Uncheck checkbox
-agent-browser hover @e5           # Hover element
-```
-
-#### Information Extraction
-```bash
-agent-browser get text @e1        # Get element text
-agent-browser get html @e1        # Get element HTML
-agent-browser get value @e1       # Get input value
-agent-browser get url             # Get current URL
-agent-browser get title           # Get page title
-```
-
-#### Screenshots
-```bash
-agent-browser screenshot page.png       # Viewport screenshot
-agent-browser screenshot page.png --full # Full page screenshot
-```
-
-#### Waiting
-```bash
-agent-browser wait 2000                  # Wait milliseconds
-agent-browser wait visible @e1           # Wait for element visible
-agent-browser wait hidden @e1            # Wait for element hidden
-agent-browser wait navigation            # Wait for navigation
-```
-
-#### Tabs
-```bash
-agent-browser tab new <url>       # Open new tab
-agent-browser tab list            # List tabs
-agent-browser tab switch <index>  # Switch to tab
-agent-browser tab close           # Close current tab
-```
-
-#### Sessions
-```bash
-agent-browser --session work open <url>  # Named session
-agent-browser --session work snapshot -i # Use same session
-```
-
-### Best Practices
-
-1. **Always use `-i` flag** for snapshots to reduce context
-2. **Use `--json` output** when parsing results programmatically
-3. **Re-snapshot after page changes** - refs become stale after navigation
-4. **Use refs (@e1) over CSS selectors** - more reliable and context-efficient
-5. **Close browser when done** - `agent-browser close`
-
-### Example: Login Flow
-
-```bash
-agent-browser open https://example.com/login
-agent-browser snapshot -i
-
-# Output shows:
-# - textbox "Email" [ref=e1]
-# - textbox "Password" [ref=e2]
-# - button "Sign In" [ref=e3]
-
-agent-browser fill @e1 "user@example.com"
-agent-browser fill @e2 "password123"
-agent-browser click @e3
-agent-browser wait navigation
-agent-browser snapshot -i
-```
-
-### Troubleshooting
-
-- If refs don't work, re-run `snapshot -i` to get fresh refs
-- Use `agent-browser --headed` for visual debugging
-- Check `agent-browser --help` for full command list
+For browser automation use the `agent-browser` skill (Snapshot + Refs workflow: open → `snapshot -i` → interact via `@e` refs → re-snapshot after page changes; close the browser when done).

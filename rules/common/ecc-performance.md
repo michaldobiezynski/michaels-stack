@@ -2,20 +2,7 @@
 
 ## Model Selection Strategy
 
-**Haiku 4.5** (90% of Sonnet capability, 3x cost savings):
-- Lightweight agents with frequent invocation
-- Pair programming and code generation
-- Worker agents in multi-agent systems
-
-**Sonnet 4.6** (Best coding model):
-- Main development work
-- Orchestrating multi-agent workflows
-- Complex coding tasks
-
-**Opus 4.5** (Deepest reasoning):
-- Complex architectural decisions
-- Maximum reasoning requirements
-- Research and analysis tasks
+Model and effort selection policy lives in `~/.claude/CLAUDE.md` ("Model Delegation for Workflows & Subagents") — single source of truth. Judge the output, not the price tag; escalate when quality is below the bar.
 
 ## Context Window Management
 
@@ -49,7 +36,7 @@ For complex tasks requiring deep reasoning:
 ## Build Troubleshooting
 
 If build fails:
-1. Use **build-error-resolver** agent
-2. Analyze error messages
+1. Use the `/diagnose` skill (Go projects: the `go-build-resolver` agent)
+2. Analyse error messages
 3. Fix incrementally
 4. Verify after each fix

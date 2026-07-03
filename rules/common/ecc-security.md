@@ -7,9 +7,9 @@ Before ANY commit:
 - [ ] All user inputs validated
 - [ ] SQL injection prevention (parameterized queries)
 - [ ] XSS prevention (sanitized HTML)
-- [ ] CSRF protection enabled
+- [ ] CSRF protection on cookie-authenticated state-changing routes
 - [ ] Authentication/authorization verified
-- [ ] Rate limiting on all endpoints
+- [ ] Rate limiting where abuse is a realistic risk (public, auth, or expensive endpoints)
 - [ ] Error messages don't leak sensitive data
 
 ## Secret Management

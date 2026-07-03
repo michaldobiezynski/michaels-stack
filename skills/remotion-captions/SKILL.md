@@ -34,7 +34,7 @@ Run Whisper with word-level timestamps:
 
 ```bash
 whisper "<video_path>" \
-  --model medium \
+  --model large-v3-turbo \
   --language en \
   --output_format json \
   --word_timestamps True \
@@ -42,7 +42,7 @@ whisper "<video_path>" \
 ```
 
 **Notes:**
-- Use `medium` model for good accuracy/speed balance. Use `turbo` if the user wants faster results.
+- Default to `large-v3-turbo` (~809M params): nearly as fast as `small` on GPU but dramatically more accurate on proper nouns, punctuation, and non-English content. Drop to `small` only on CPU-only or low-RAM (<8GB) machines.
 - The `--word_timestamps True` flag is essential for per-word timing.
 - Whisper outputs `<filename>.json` in the output directory.
 
@@ -368,12 +368,12 @@ print(f'Converted {len(sentences)} sentences with {sum(len(s[\"words\"]) for s i
 | `BG_COLOUR` | `rgba(0,0,0,0.75)` | Caption backdrop colour |
 | `fontSize` | 48 | Base font size in pixels |
 | `bottom` | `8%` | Caption vertical position |
-| Whisper model | `medium` | `tiny`, `base`, `small`, `medium`, `large`, `turbo` |
+| Whisper model | `large-v3-turbo` | `tiny`, `base`, `small`, `medium`, `large`, `large-v3-turbo`, `turbo` |
 
 ## Troubleshooting
 
 - **Remotion 404 on video files**: Remotion's bundler copies `public/` to a temp directory and does NOT follow symlinks. Always use real file copies, not symlinks, for videos in `public/`
-- **Whisper runs slowly**: Use `--model turbo` for faster transcription or `--model small` for less accuracy but much faster
-- **Poor word timestamps**: Increase model size; `medium` or `large` gives best word boundaries
+- **Whisper runs slowly**: `large-v3-turbo` is already the speed-optimised flagship. If still too slow, you are likely CPU-bound; drop to `small` on CPU-only machines or `medium` on low-VRAM GPUs (<6GB).
+- **Poor word timestamps**: `large-v3-turbo` gives the best word boundaries available; only fall back to a smaller model if memory constrained.
 - **Captions out of sync**: Check that the video fps in the composition matches what you set. Use `ffprobe` to verify the source video fps
 - **Missing words in Whisper output**: Some segments may lack `words` array if Whisper confidence is very low; the conversion script skips these gracefully

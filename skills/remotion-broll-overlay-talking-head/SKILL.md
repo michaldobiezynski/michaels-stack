@@ -273,8 +273,14 @@ JSON:
 
 ```bash
 whisper clip.mov --word_timestamps True --output_format json \
-  --model small.en --output_dir /tmp/transcripts
+  --model large-v3-turbo --language en --output_dir /tmp/transcripts
 ```
+
+Note: `large-v3-turbo` (~809M params) has no `.en`-only variant; pass
+`--language en` to skip language detection. On GPU it's nearly as fast
+as `small.en` but materially better on proper nouns, jargon, and
+punctuation, which matters here because B-roll cue alignment depends
+on getting the *exact* phrase boundary right.
 
 The resulting JSON contains `words: [{word, start, end}]`. For each B-roll
 cutaway, note the source-clip seconds during which the matching phrase is
