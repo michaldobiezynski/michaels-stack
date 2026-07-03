@@ -11,20 +11,37 @@ fi
 
 echo "Syncing ~/.claude → michaels-stack plugin..."
 
-rsync -a --delete --exclude='.git' --exclude='debug/' --exclude='todos/' --exclude='projects/' --exclude='memory/' --exclude='settings.json' --exclude='settings.local.json' --exclude='credentials*' --exclude='ECC_MANIFEST.md' --exclude='*.log' "$CLAUDE_DIR/skills/" "$PLUGIN_DIR/skills/"
+# Applied to EVERY rsync — the repo is public, so nothing secret-shaped may sync
+EXCLUDES=(
+    --exclude='.git'
+    --exclude='debug/'
+    --exclude='todos/'
+    --exclude='projects/'
+    --exclude='memory/'
+    --exclude='settings.json'
+    --exclude='settings.local.json'
+    --exclude='credentials*'
+    --exclude='.env*'
+    --exclude='*.pem'
+    --exclude='*.key'
+    --exclude='ECC_MANIFEST.md'
+    --exclude='*.log'
+)
+
+rsync -a --delete "${EXCLUDES[@]}" "$CLAUDE_DIR/skills/" "$PLUGIN_DIR/skills/"
 echo "  Skills synced"
 
-rsync -a --delete "$CLAUDE_DIR/agents/" "$PLUGIN_DIR/agents/"
+rsync -a --delete "${EXCLUDES[@]}" "$CLAUDE_DIR/agents/" "$PLUGIN_DIR/agents/"
 echo "  Agents synced"
 
-rsync -a --delete "$CLAUDE_DIR/commands/" "$PLUGIN_DIR/commands/"
+rsync -a --delete "${EXCLUDES[@]}" "$CLAUDE_DIR/commands/" "$PLUGIN_DIR/commands/"
 echo "  Commands synced"
 
-rsync -a --delete "$CLAUDE_DIR/rules/" "$PLUGIN_DIR/rules/"
+rsync -a --delete "${EXCLUDES[@]}" "$CLAUDE_DIR/rules/" "$PLUGIN_DIR/rules/"
 echo "  Rules synced"
 
 if [[ -d "$CLAUDE_DIR/reference" ]]; then
-    rsync -a --delete "$CLAUDE_DIR/reference/" "$PLUGIN_DIR/reference/"
+    rsync -a --delete "${EXCLUDES[@]}" "$CLAUDE_DIR/reference/" "$PLUGIN_DIR/reference/"
     echo "  Reference synced"
 fi
 
