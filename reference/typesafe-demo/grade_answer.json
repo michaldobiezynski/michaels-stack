@@ -1,0 +1,39 @@
+{
+  "model": "jev-latest",
+  "state": {
+    "question": "Solve for x: 3x + 7 = 22",
+    "expected_answer": "x = 5",
+    "learner_answer": "x=5 because 22-7 is 15 and 15 divided by 3 is 5",
+    "learner_level": "Year 8"
+  },
+  "questions": {
+    "is_correct": {
+      "type": "noul",
+      "instructions": "Is the learner's final answer in `learner_answer` mathematically equivalent to `expected_answer`? Ignore formatting, spacing and whether they wrote 'x =' in front.",
+      "criteria": {
+        "true": "The final value the learner states equals the expected answer",
+        "false": "The final value differs from the expected answer, or no final value is given"
+      }
+    },
+    "error_type": {
+      "type": "choice",
+      "instructions": "If the learner's answer is wrong, which kind of mistake best describes it? If the answer is correct, choose 'none'.",
+      "criteria": {
+        "none": "The answer is correct; no error to classify",
+        "arithmetic": "Right method, a slip in adding, subtracting, multiplying or dividing",
+        "method": "Wrong approach to the equation, e.g. added 7 instead of subtracting, or divided before subtracting",
+        "misread": "Solved a different question from the one asked",
+        "incomplete": "Started correctly but stopped before reaching a final value"
+      }
+    },
+    "working_shown": {
+      "type": "score",
+      "instructions": "How fully does `learner_answer` show the method used, as a Year 8 teacher would judge it?",
+      "criteria": [
+        "Final answer only, no working at all",
+        "Some steps shown but gaps a teacher would query",
+        "Every step shown and each one is correct"
+      ]
+    }
+  }
+}

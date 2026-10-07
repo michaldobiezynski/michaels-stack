@@ -8,22 +8,26 @@ description: |
   was provided without a valid path", (3) vi.spyOn(document,'execCommand') throws "The
   property execCommand is not defined on the object", (4) clipboard/copy code that calls
   document.execCommand('copy') works at runtime (try/catch) but its tests explode on the
-  mock. Root cause: Node 25 ships an experimental GLOBAL localStorage that shadows jsdom's
-  window.localStorage and is missing parts of the Storage contract; and jsdom 29 removed
-  document.execCommand entirely (older jsdom stubbed it to return false). Both are
-  environment/version gaps, not code bugs. Fix: install an in-memory Storage double in the
-  Vitest setup file, and assign document.execCommand before spying on it.
+  mock, (5) a navigator.clipboard writeText spy reports "expected to be called 1 times, but
+  got 0 times" in a test that uses userEvent.setup(). Root cause: Node 25 ships an
+  experimental GLOBAL localStorage that shadows jsdom's window.localStorage and is missing
+  parts of the Storage contract; jsdom 29 removed document.execCommand entirely (older jsdom
+  stubbed it to return false); and user-event v14's setup() installs its own clipboard stub
+  over any mock defined before it. All three are environment/harness gaps, not code bugs.
+  Fix: install an in-memory Storage double in the Vitest setup file, assign
+  document.execCommand before spying on it, and install clipboard spies AFTER userEvent.setup().
 author: Claude Code
-version: 1.0.0
-date: 2026-07-01
+version: 1.1.0
+date: 2026-08-03
 ---
 
 # Vitest + jsdom Web API gaps on Node 25
 
 ## Problem
 
-Two version-specific test-environment gaps make otherwise-correct app code fail **only in
-tests** under Vitest + jsdom on Node 25:
+Three test-environment gaps make otherwise-correct app code fail **only in tests** under
+Vitest + jsdom on Node 25. The first two are version-specific; the third is a harness
+interaction that has caught people out for years:
 
 1. **`localStorage` shadowing** — Node 25 exposes an experimental *global* `localStorage`
    (Web Storage) that shadows jsdom's `window.localStorage` inside the Vitest `jsdom`
@@ -37,6 +41,11 @@ tests** under Vitest + jsdom on Node 25:
    throws `Error: The property "execCommand" is not defined on the object`. App code that
    guards `document.execCommand('copy')` in a try/catch still works at runtime; only the
    test's mock setup breaks.
+
+3. **`userEvent.setup()` replaces your clipboard mock** — user-event v14 installs its own
+   stub over `navigator.clipboard`, silently discarding a spy defined before it. The
+   assertion fails with zero calls even though the component copied correctly, so the
+   evidence points at the component rather than the harness.
 
 ## Context / Trigger Conditions
 
@@ -98,6 +107,42 @@ it('copies via execCommand', () => {
 
 To test the failure path, assign a throwing function (or leave it undefined) and assert the
 app's try/catch returns `false`.
+
+### 3. `userEvent.setup()` overwrites your `navigator.clipboard` mock
+
+`@testing-library/user-event` v14's `setup()` installs its **own** clipboard stub over
+`navigator.clipboard`. A spy defined before `setup()` is silently replaced, so
+`expect(writeText).toHaveBeenCalled()` reports zero calls even though the component copied
+correctly. Nothing errors; the assertion just fails, which sends you hunting in the component
+instead of the harness.
+
+Symptom: `AssertionError: expected "vi.fn()" to be called 1 times, but got 0 times` on a
+clipboard assertion, in a test that calls `userEvent.setup()`.
+
+Install the spy **after** `setup()`:
+
+```ts
+let writeText: ReturnType<typeof vi.fn>
+beforeEach(() => {
+  writeText = vi.fn().mockResolvedValue(undefined)
+})
+
+// user-event's setup() stubs navigator.clipboard, so the spy has to go on afterwards
+// or it is silently replaced and never called.
+function setupUser() {
+  const user = userEvent.setup()
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText },
+    configurable: true,
+    writable: true,
+  })
+  return user
+}
+```
+
+Use `setupUser()` in place of `userEvent.setup()` throughout. The alternative is to read back
+through user-event's own stub via `await navigator.clipboard.readText()`, which exercises the
+real path but makes rejection paths (testing your "copy blocked" branch) awkward to simulate.
 
 ## Verification
 

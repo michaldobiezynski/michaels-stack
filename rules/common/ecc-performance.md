@@ -36,7 +36,7 @@ For complex tasks requiring deep reasoning:
 ## Build Troubleshooting
 
 If build fails:
-1. Use the `/diagnose` skill (Go projects: the `go-build-resolver` agent)
+1. Use the `/diagnosing-bugs` skill (Go projects: the `go-build-resolver` agent)
 2. Analyse error messages
 3. Fix incrementally
 4. Verify after each fix

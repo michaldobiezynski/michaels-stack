@@ -1,3 +1,10 @@
 .DS_Store
 *.log
 node_modules/
+skills/synced/
+skills/.trash/
+# Third-party MIT skills without their licence notice; install from mattpocock/skills instead
+skills/retro/
+skills/pr/
+skills/writing-for-agents/
+skills/diagnosing-bugs/

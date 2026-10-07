@@ -91,6 +91,10 @@ Agent (planner):
 **WAITING FOR CONFIRMATION**: Proceed with this plan? (yes/no/modify)
 ```
 
+## Multi-sitting work
+
+If the confirmed plan will span more than one sitting (or is likely to be resumed by a fresh agent), persist it immediately after confirmation as a session worksheet per the `session-worksheet` skill (`worksheets/YYYY-MM-DD-<slug>.md`), and update the worksheet after each completed step in the same commit as that step's code.
+
 ## Important Notes
 
 **CRITICAL**: The planner agent will **NOT** write any code until you explicitly confirm the plan with "yes" or "proceed" or similar affirmative response.

@@ -351,3 +351,16 @@ Empirically gathered May 2026 from:
 
 Official documentation: https://docs.claude.com/en/docs/claude-code/ (check
 for the current CLI flag set; this skill reflects the CLI as of May 2026).
+
+## Addendum (15/09/2026): calls that neither return nor fail
+- During a 5,000-topic overnight batch, after a usage-window limit ("You've hit your session
+  limit · resets 6:40pm") the batch resumed at 18:30 and then produced NO successes and NO
+  failures for 2.5 hours; `ps` showed fresh `claude -p` processes under a minute old and the
+  cost log (which stamps every successful call) had a 5-hour gap. `subprocess.run(timeout=)`
+  did not rescue it. Restarting the batch restored the normal 48 s median immediately.
+- Diagnose with the cost log, not the process list: bucket `duration_s` by hour; a gap with
+  processes still cycling means stuck calls, not a slow model.
+- Fix in the wrapper: `Popen(..., start_new_session=True)`, `communicate(timeout=)`, and on
+  `TimeoutExpired` `os.killpg(proc.pid, SIGKILL)` then `communicate()` again. Killing only the
+  direct child leaves helpers holding the pipe and the wait never returns. Keep the batch
+  driver's bulk-failure backoff (pause 30 min when >30% of a stage fails) on top of this.

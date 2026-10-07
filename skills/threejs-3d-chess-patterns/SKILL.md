@@ -6,12 +6,14 @@ description: |
   (2) OrbitControls steals right-click events needed for custom interactions,
   (3) board squares invisible due to Z-fighting with arena/floor geometry,
   (4) overlay meshes (highlights) hidden inside board geometry,
-  (5) Euler rotation order causes wrong orientation on cylinders/cones.
+  (5) Euler rotation order causes wrong orientation on cylinders/cones,
+  (6) light pieces blend into light squares from a high camera (measure L*, darken the squares,
+  add contact shadows; beware pixel-test confounds).
   Covers Three.js OrbitControls, raycasting, emissive materials, renderOrder,
   and quaternion-based rotation for directional arrows.
 author: Claude Code
-version: 1.0.0
-date: 2026-02-22
+version: 1.1.0
+date: 2026-09-25
 ---
 
 # Three.js 3D Chess Board Patterns
@@ -145,6 +147,33 @@ const material = new THREE.MeshStandardMaterial({
 ```js
 square.renderOrder = 1;
 ```
+
+## Problem 5: Light Pieces Vanish Into Light Squares From Above
+
+### Context / Trigger Conditions
+- From a steep overview, ivory/white pieces read as part of the cream squares under them.
+- The piece material and the light-square colour are close in value (e.g. 0xd8c8a4 on 0xcfc5b0).
+
+### Solution
+1. **Measure first.** Screenshot the overview, convert 5x5 px patches to CIELAB L*, and compare piece
+   tops with open light squares. Verified case: 84.5 against 79.3, a 1.16:1 luminance ratio, far
+   below the WCAG non-text 3:1 proxy.
+2. **Change value, not hue.** Darken the light squares toward buff, tan or slate at about L* 67 to
+   69. Real tournament boards use buff or tan, never white. Slate 0xa6a097 gave a 15-point gap.
+   Hue-only changes (a buff close to ivory) still half-merge.
+3. **Ground each piece with a contact shadow.** Use one InstancedMesh of a radial blot texture
+   (about 3.8 x base radius), at y just above the squares, with depthWrite off.
+   - Each frame, read each live piece's actual world position from its rig, so the shadow follows
+     glides and dodges.
+   - Widen and fade it with any lift.
+   - Expose it through a probe for tests.
+4. Darkened rims (fresnel on albedo) added little from above; skip them unless outlines are wanted.
+
+### Test pitfalls
+- Sample a piece's base beside it, **away from the key light's cast shadow**. On a crowded rank, a
+  corner can sit in a neighbour's cast shadow.
+- **Last-move plates and selection sigils** tint exactly the squares a test just moved or chose.
+  Assert movement and float through a probe, not through pixels.
 
 ## Verification
 - Arrows point correctly in all 4 directions (up, down, left, diagonal)

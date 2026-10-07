@@ -12,13 +12,21 @@ description: |
   (7) the user asks about WXT, Plasmo, or CRXJS extension frameworks,
   (8) the user wants to publish an extension to the Chrome Web Store via CLI,
   (9) the user needs to debug content scripts, service workers, or extension popups,
-  (10) the user asks about hot module replacement (HMR) for Chrome extensions.
+  (10) the user asks about hot module replacement (HMR) for Chrome extensions,
+  (11) an iframe of a web-accessible page listed with use_dynamic_url fails with
+  net::ERR_BLOCKED_BY_RESPONSE, or never receives the content script's postMessage,
+  (12) keeping an extension's ID (derived from the install folder's path) out of the pages
+  it frames into, or finding an unpacked extension's ID without a service worker,
+  (13) a :hover or :focus-visible rule for UI a content script puts on a page has no effect,
+  or a focus ring shows on dark pages but not light ones (inline styles outrank it),
+  (14) injected UI looks right on a blank page but not on the real site (off-centre text, odd
+  spacing), or a setting changed in one extension page (a framed board) changes in another (a tab).
   Covers the complete lifecycle: scaffolding, development, testing, debugging, packaging,
   and publishing. Includes verified Playwright and Puppeteer APIs, Chrome CLI flag status,
-  console capture limitations, and the autonomous iteration loop.
+  console capture limitations, use_dynamic_url behaviour, and the autonomous iteration loop.
 author: Claude Code
-version: 1.0.0
-date: 2026-02-22
+version: 1.3.0
+date: 2026-10-01
 ---
 
 # Chrome Extension Development with Claude Code
@@ -936,6 +944,125 @@ function extensionId(publicKeyBase64) {
 
 ---
 
+## Part 13: use_dynamic_url and Framed Extension Pages (verified, Chromium 153, 30/09/2026)
+
+Verified with Playwright 1.63's bundled Chromium 153 and an MV3 content script that frames a
+web-accessible extension page (`extension/board.html`) into a site.
+
+- `chrome.runtime.getURL(path)` for a resource listed with `"use_dynamic_url": true` returns
+  `chrome-extension://<session GUID>/path` (with or without a query string appended);
+  `getURL('')` returns the fixed root; `chrome.runtime.dynamicId` holds the GUID.
+- The iframe's `src`, which the page's scripts can read, carries the GUID, **but the framed
+  document commits at the extension's fixed origin**: its messages arrive with
+  `e.origin === 'chrome-extension://<fixed id>'`, and Playwright's `frame.url()` reports the
+  fixed URL. So:
+  - post to the frame with `targetOrigin = new URL(chrome.runtime.getURL('')).origin`;
+    `new URL(frame.src).origin` makes every `postMessage` vanish without an error;
+  - a test that the page cannot see the fixed ID must read the iframe element's `src`
+    attribute, not `frame.url()`.
+- **Blocked on cross-origin-isolated pages.** Under a parent with COEP (`credentialless` or
+  `require-corp`), the GUID address fails with `net::ERR_BLOCKED_BY_RESPONSE` (frame at
+  `chrome-error://chromewebdata/`) while the fixed address loads. The manifest's
+  `cross_origin_embedder_policy` does not unblock it. Check the target site's COEP from a real
+  browser (sites vary it by client) before choosing `use_dynamic_url`; otherwise use a manifest
+  `key` (Part 12), so every install shares one ID rather than one made from the folder's path.
+- **Test stand-ins must copy the site's isolation headers.** Pages served by
+  `route.fulfill` without the site's COEP/COOP let a `use_dynamic_url` build pass offline and
+  fail live. Pass `headers: { 'Cross-Origin-Embedder-Policy': ..., 'Cross-Origin-Opener-Policy': ... }`.
+- **An unpacked extension's ID without a key** is the Part 12 hash applied to the absolute
+  folder path's bytes: `idOf(pathString)`. Verified against the ID Chrome assigned. A harness
+  can compute it to open `chrome-extension://<id>/popup.html` with no service worker to ask.
+- Extension pages that instantiate WebAssembly need
+  `"content_security_policy": { "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'" }`
+  (this Chromium's default for extension pages lacked `'wasm-unsafe-eval'`).
+- Chrome stops drawing a cross-origin frame that is hidden: an extension frame held at
+  `visibility: hidden` until ready never gets ready. Hold it at `opacity: 0`.
+- If the Playwright config's `globalSetup` rebuilds the extension, a red check must change the
+  source (manifest, scripts), not the built folder: the build overwrites it.
+
+---
+
+## Part 14: UI Injected into Host Pages: Inline Styles vs State Rules (verified, Chromium 153, 01/10/2026)
+
+UI a content script adds to a page (a button, a panel) is often styled inline so the host
+page's CSS cannot restyle it. **An inline declaration outranks every stylesheet rule that lacks
+`!important`, whatever the rule's specificity.** So a `<style>` the script injects for
+`:hover` or `:focus-visible` silently loses on any property the inline style also sets:
+`box-shadow`, `background`, and `border-color` when the inline style uses the `border`
+shorthand.
+
+Symptoms: `el.matches(':focus-visible')` is true (focus works) but the ring looks wrong; a
+two-tone ring shows on dark pages only, because the page itself fills the gap that the inner
+ring was meant to fill; hover colours never change.
+
+Fix: mark the competing declarations in the state rules `!important`, or move those
+properties out of the inline style into the injected stylesheet. Share one constant for any
+value both use (for example the drop shadow kept alongside the focus ring):
+
+```javascript
+const SHADOW = '0 4px 18px rgba(0,0,0,0.5)'
+button.style.cssText = `border:1px solid ${GOLD};box-shadow:${SHADOW};...`
+style.textContent = `
+#my-switch:hover { border-color: ${INK} !important; }
+#my-switch:focus-visible { outline: 2px solid ${GOLD}; outline-offset: 2px;
+  box-shadow: 0 0 0 2px ${DARK}, ${SHADOW} !important; }`
+```
+
+Test the look, not just the focus. Insert an input just before the element, focus it and
+press Tab: keyboard focus reliably matches `:focus-visible`. Then read
+`getComputedStyle(el).boxShadow` and `outlineColor`. For hover, `hover()` and poll the
+computed colour until any transition ends. Look at stills on both a white and a dark page.
+For a quick real-browser check of one module, Vite's `build()` can bundle it alone:
+`{ configFile: false, publicDir: false, build: { emptyOutDir: false, lib: { entry, formats:
+['iife'], name } } }` (without `publicDir: false` it copies the project's `public/` into the
+output folder). When `@playwright/test` is loaded with a dynamic `import()` of its resolved
+path, `chromium` arrives on `default`.
+
+A two-colour focus ring (WCAG technique C40) shows on any background when its two colours have
+at least 9:1 contrast with each other: an outline in one colour, offset by a box-shadow ring in
+the other.
+
+## Part 15: Extension UI on Someone Else's Page, and Extension Pages Across Contexts (verified, Chromium, 06/10/2026)
+
+**The host page's CSS reaches injected UI.** Lichess styles every `button` with `text-align: start`, which
+pushed a round button's label 10.5 px left of centre on the live site, while offline stills on a blank page
+were centred. Inline styles only cover the properties you thought to set. Put the UI in a shadow root, give
+its host `all: initial` (it resets what the page passes down by inheritance, such as font, letter-spacing and
+text-transform), and put the whole look in the shadow root's own stylesheet. Then no `!important` is needed.
+Centre with flex rather than `text-align`. A `<style>` inside the shadow root is subject to the page's CSP
+`style-src` (Lichess's meta CSP allows `'unsafe-inline'`); constructable stylesheets avoid that question.
+
+```javascript
+const host = document.createElement('div')
+host.style.cssText = 'all:initial;position:fixed;right:16px;bottom:16px;z-index:2147482999;display:block'
+const root = host.attachShadow({ mode: 'open' })
+const style = document.createElement('style')
+style.textContent = 'button { display:flex; align-items:center; justify-content:center; /* the whole look */ }'
+root.append(style, button)
+```
+
+Measure centring, don't eyeball it: `range.selectNodeContents(button)` and compare the centre of
+`range.getBoundingClientRect()` with the button's. Test it under hostile page styles: `page.addStyleTag`
+with the site's own rule plus inherited text styles on `body`. A mutation without `all: initial` then fails.
+Playwright's `getByTestId` and CSS locators pierce open shadow roots, but `document.activeElement` returns the
+host. A focus test must walk `activeElement.shadowRoot.activeElement`, or it passes vacuously.
+
+**Extension pages share one origin across contexts.** A page framed into a site (web-accessible, with host
+permissions for it) and the same extension's pages opened as tabs share `localStorage`. An extension's world
+page writing `ce-world-sound` changed what its Lichess board read. Key per-context settings separately.
+
+**Inside an extension iframe, media queries and `vh` measure the frame.** A site's phone rule
+(`@media (max-width: 640px)`) applies to any board-sized frame under 640 px. Also, `overflow-y: auto` clips the
+x axis too: a visible `overflow-x` computes to `auto` once the other axis isn't visible, so anything that
+overhung the edge (a header pill) is cut off. Let it wrap.
+
+**Build flags:** Vite 8 replaces `define: { 'import.meta.env.VITE_X': JSON.stringify(value) }` at build time.
+Grep the built chunk for the value to confirm. Reading `import.meta.env.VITE_X ?? fallback` keeps other
+builds safe.
+
+**Tests on new tabs:** Playwright's `waitForFunction` gives up as soon as its predicate throws, and a new
+tab's probe may not exist yet. Write `window.__probe?.world?.ready`, not `window.__probe.world.ready`.
+
 ## Verification
 
 To verify the autonomous loop works:
@@ -960,6 +1087,8 @@ To verify the autonomous loop works:
 
 ## References
 
+- [WCAG technique C40: two-colour focus indicator](https://www.w3.org/WAI/WCAG22/Techniques/css/C40)
+
 - [Playwright Chrome Extensions Docs](https://playwright.dev/docs/chrome-extensions)
 - [Playwright Screenshots API](https://playwright.dev/docs/screenshots)
 - [Playwright v1.57 Release Notes](https://playwright.dev/docs/release-notes#version-157)
@@ -978,6 +1107,8 @@ To verify the autonomous loop works:
 - [Chrome: Service Worker Lifecycle](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle)
 - [Chrome: Content Scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts)
 - [Chrome: Manifest Key](https://developer.chrome.com/docs/extensions/reference/manifest/key)
+- [Chrome: web_accessible_resources (use_dynamic_url)](https://developer.chrome.com/docs/extensions/reference/manifest/web-accessible-resources)
+- [PSA: Dynamic URL support in Chrome 130](https://groups.google.com/a/chromium.org/g/chromium-extensions/c/Nr3QNKFv74c/m/PYLvA7dOAAAJ)
 - [Chrome: action API](https://developer.chrome.com/docs/extensions/reference/api/action)
 - [Chrome: --load-extension Removal RFC](https://groups.google.com/a/chromium.org/g/chromium-extensions/c/aEHdhDZ-V0E)
 - [Chrome: --disable-extensions-except Removal PSA](https://groups.google.com/a/chromium.org/g/chromium-extensions/c/FxMU1TvxWWg)

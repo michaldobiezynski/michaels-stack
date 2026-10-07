@@ -9,9 +9,11 @@ description: |
   was NOT deleted afterwards. Root cause: the REMOTE merge SUCCEEDED; only gh's
   LOCAL post-merge step (checkout base + delete local branch) failed because the
   base branch is checked out in another worktree. Do NOT re-run the merge.
+  Also: (4) merging several PRs that were each tested on their own ("merge
+  all") and proving master then holds exactly the tested combination.
 author: Claude Code
-version: 1.0.0
-date: 2026-06-22
+version: 1.1.0
+date: 2026-10-01
 ---
 
 # `gh pr merge --delete-branch` errors inside a git worktree
@@ -65,6 +67,38 @@ undeleted too.
    git fetch origin --prune
    git merge --ff-only origin/<base>
    ```
+
+## Merging several PRs that were tested one by one (verified 01/10/2026)
+
+Each PR was tested against the old base, never together. Test the combination GitHub will build, then
+merge so that only that combination can land:
+
+```bash
+git fetch origin
+git diff --name-only origin/master...origin/a | sort > a.txt   # files both touch: textual risk
+git diff --name-only origin/master...origin/b | sort > b.txt; comm -12 a.txt b.txt
+git worktree add --detach /tmp/combo origin/master && cd /tmp/combo
+ln -s <main>/node_modules node_modules                          # lockfile unchanged
+git -c user.name=x -c user.email=x@local merge -q --no-ff origin/a
+git -c user.name=x -c user.email=x@local merge -q --no-ff origin/b
+git rev-parse 'HEAD^{tree}' > /tmp/tested-tree                  # quote ^{tree} in zsh
+npm run build && npx vitest run                                 # the project's gates
+# from a folder outside every checkout, so gh touches no local branch:
+gh pr ready A -R owner/repo && gh pr merge A -R owner/repo --merge \
+  --match-head-commit "$(git rev-parse origin/a)" --subject "<title, short> (#A)" --body ""
+# wait until `gh pr view B --json mergeable` is MERGEABLE (UNKNOWN while GitHub recomputes), then B likewise
+git fetch origin && [ "$(git rev-parse 'origin/master^{tree}')" = "$(cat /tmp/tested-tree)" ] && echo same
+```
+
+- `--match-head-commit` makes GitHub refuse if the branch moved after you tested it.
+- With merge commits (not squash) the server's merges give the same tree as the local ones, so the
+  tree check proves the base now holds what you tested, byte for byte.
+- `--body ""` leaves the merge commit's body empty (gh sends it when the flag is given). `<title> (#N)`
+  can run past a 72-character subject rule; shorten the subject, not the PR title.
+- Drafts must be marked ready (`gh pr ready`) before `gh pr merge` will take them.
+- Remove each worktree whose `node_modules` is a symlink after `rm <wt>/node_modules` (no trailing
+  slash): only the link goes, never the shared folder. Merge commits keep the branch SHAs, so `git
+  branch -d` (not `-D`) works once `git merge-base --is-ancestor <branch> origin/master` holds.
 
 ## Verification
 

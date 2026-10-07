@@ -1,5 +1,5 @@
 ---
-description: End-to-end autonomous feature workflow. Branch, ATDD/TDD implementation, granular commits, auto-detected E2E verification, draft PR, two-round deep agent review, then fix in-scope findings and file issues for the rest. Never merges.
+description: End-to-end autonomous feature workflow. Branch, ATDD/TDD implementation, granular commits, auto-detected E2E verification, draft PR, a two-round review on a six-agent budget, then fix in-scope findings and file issues for the rest. Never merges.
 argument-hint: "<feature description> [--base <branch>] [--stack [branch]] [--branch <name>] [--no-pr] [--no-e2e]"
 ---
 
@@ -33,12 +33,18 @@ Parse these out of `$ARGUMENTS`; everything that is not a flag is the feature de
   explicitly overrides them (notably the no-pause autonomy contract above). British English, no em-dashes.
 - Implementation honesty: do not claim code works unless you ran it, typechecked it, or read it carefully.
   Surface what you did NOT do (tests not run, files not read, deps not checked).
-- For genuinely independent sub-problems, spawn a team of agents in parallel in a single message. Each prompt
-  must be self-contained (goal, background, output shape, length cap) and contain the literal word
-  **ultrathink** in its body. Synthesise their outputs; do not relay verbatim. When agents disagree, surface
-  it and arbitrate with reasoning.
+- **Sub-agent budget: six for the whole run, delegation included.** Investigation in Phase 2 gets at most
+  three; the Phase 6 review workflow manages its own six internally and does not count against yours. Work
+  directly by default and delegate only when a sub-problem is genuinely independent and too large to hold
+  alongside the build, or when reading it would flood your context. Two well-scoped agents beat six thin
+  ones. Each prompt must be self-contained (goal, background, output shape, length cap); add the literal
+  word **ultrathink** only where the work genuinely needs deep reasoning, not by default. Synthesise their
+  outputs, do not relay verbatim, and when agents disagree, surface it and arbitrate with reasoning.
 - Commit granularly: one logical change per commit, using the CLAUDE.md format `<type>: (<scope>) <subject>`,
   imperative, lowercase, no period, under 72 chars. Never add a Claude co-author or AI-attribution line.
+- If the build is expected to span more than one session (or may be resumed by a fresh agent), maintain a
+  session worksheet per the `session-worksheet` skill: persist the acceptance criteria and phase plan to
+  `worksheets/YYYY-MM-DD-<slug>.md` after Phase 1 and update it in the same commit as each green slice.
 
 ---
 
@@ -81,10 +87,12 @@ criteria as GIVEN/WHEN/THEN scenarios, including edge cases and boundaries. Beca
 and recording each as an explicit assumption. Keep the acceptance criteria in the conversation and the PR body;
 do not create a stray spec `.md` file (per the CLAUDE.md no-unsolicited-docs rule).
 
-## Phase 2: parallel investigation
+## Phase 2: investigation
 
-Spawn a team of agents in parallel (one concern each, **ultrathink** in every prompt) to investigate before
-writing code. Suggested concerns, adapted to the task:
+Understand the ground before writing code. Investigate directly where you can; spawn **at most three**
+agents, in a single message, and only for concerns that are genuinely independent of each other and heavy
+enough to be worth the round trip. On a greenfield repo, or where the answer is a couple of greps, do it
+yourself and say so. Concerns to cover, however you cover them:
 
 - Codebase search: relevant modules, existing patterns, call sites the change must integrate with.
 - Library/API/backend behaviour: verify the real contracts the feature will depend on (no guessed signatures).
@@ -132,14 +140,16 @@ If `pr_capable` and not `--no-pr`:
   (`git ls-remote --heads <remote> <stacked-on-branch>`). If it is missing, push it first. If it cannot be
   pushed, fall back to opening the PR against `<base>` and note the stack relationship in the body.
 - Open a **draft** PR: `gh pr create --draft --base <pr-base>`, where `<pr-base>` is the stacked-on branch for
-  stacked work, else the base branch. The body must contain: summary, the acceptance criteria, assumptions
-  made, a test plan, and an explicit "verified / not verified" section. Capture the PR number.
+  stacked work, else the base branch. Write the body with the `pr` skill's template (Summary, Evidence,
+  Merge Danger) and add the two sections it lacks: **Acceptance criteria** (from Phase 1) and
+  **Assumptions**. Evidence carries the Phase 4 "verified / not verified" list with the exact commands and
+  output, in place of a separate test plan. Capture the PR number.
 
 If `--no-pr` or not `pr_capable`: skip PR creation. There is no PR number; the review in Phase 6 runs against
 the local diff (`review-base`...HEAD), and Phase 8 reports out-of-scope findings instead of (or in addition to)
 filing issues.
 
-## Phase 6 + 7: two-round deep review (workflow)
+## Phase 6 + 7: two-round review (workflow)
 
 First confirm the review-base ref resolves (`git rev-parse --verify <review-base>`); if not, stop and report
 rather than reviewing an empty range.
@@ -155,7 +165,8 @@ Workflow({
     prNumber: <pr-number-or-null>,
     featureContext: "<the feature description + key assumptions>",
     acText: "<the GIVEN/WHEN/THEN acceptance criteria>",
-    isWebUI: <true|false from Phase 2 detection>
+    isWebUI: <true|false from Phase 2 detection>,
+    // agentBudget: 6   // optional; the default. Raise only for an unusually large diff.
   }
 })
 ```
@@ -166,10 +177,15 @@ and notifies you when the run **completes**. Treat the task-id acknowledgement a
 the completion notification arrives, read the returned
 `{ confirmed, inScope, outOfScope, unverified, dismissed, counts }`.
 
-This runs your exact Round-1 deep-research review prompt across parallel lenses (correctness, integration with
-the rest of the repo and its backend, security, tests/ATDD, conventions/CLAUDE.md, performance, plus
-accessibility/UX for web UIs), dedupes findings, then runs your exact Round-2 verify-the-findings prompt as an
-adversarial pass on every finding, with one retry for agents that error.
+The workflow spends **six sub-agents in total**: four reviewers, then two verifiers. Round 1 runs four merged
+lenses (correctness and integration, security, tests/ATDD, and craft covering conventions, performance and,
+for web UIs, accessibility) and dedupes the findings. Round 2 splits every deduped finding across the two
+remaining agents, which adversarially try to refute each one and classify its scope. Each agent is told to
+work alone, so the fan-out cannot multiply.
+
+There is no verification retry, because a retry would breach the budget. A finding whose verifier errored or
+whose id was omitted comes back in `unverified`, which Phase 8 requires you to resolve yourself rather than
+drop.
 
 ## Phase 8: act on the review
 
@@ -183,9 +199,10 @@ proceed as if there were no findings.
   PR/branch). In autonomous mode, create them directly with appropriate labels rather than quizzing first.
   If NOT `pr_capable` (local-only or unauthenticated gh), do not silently drop them: list every out-of-scope
   finding verbatim (title, evidence, suggested fix) in the final report.
-- **Unverified findings** (`unverified`): these had a verifier error, not a dismissal. Do NOT drop them.
-  Verify each yourself by reading the cited file, then route to in-scope fix or out-of-scope issue; if you
-  still cannot judge it, list it prominently in the final report.
+- **Unverified findings** (`unverified`): the verifier errored or omitted the id. This is not a dismissal,
+  and there is no automatic retry, so **you** are the second round for these. Do NOT drop them and do NOT
+  spawn an agent for them: read the cited file yourself, then route each to an in-scope fix or an
+  out-of-scope issue. If you still cannot judge one, list it prominently in the final report.
 - **Dismissed findings** (`dismissed`): note them briefly so the reasoning is visible.
 
 ## Phase 9: finalise

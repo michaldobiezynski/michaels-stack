@@ -30,7 +30,7 @@ Unverified, over-built, or generic output is the primary failure mode of coding 
 - Before reporting progress, audit each claim against a tool result from this session. If tests fail, say so with the output; if a step was skipped, say that.
 
 ### Scope discipline
-- Only make changes that are directly requested or clearly necessary. Don't refactor or "improve" beyond what was asked; don't add comments or type annotations to code you didn't change; don't add error handling for scenarios that can't happen; don't create helpers or abstractions for one-time operations. The right amount of complexity is the minimum the task needs. Worthwhile adjacent work: suggest it, don't do it.
+- Only make changes that are directly requested or clearly necessary. Don't refactor or "improve" beyond what was asked; don't add comments or type annotations to code you didn't change; don't add error handling for scenarios that can't happen; don't create helpers or abstractions for one-time operations (but if you run the same 3+ step command sequence twice, capture it in the repo's existing task runner: a package.json script, scripts/*.sh, Makefile or justfile, and reuse it thereafter). The right amount of complexity is the minimum the task needs. Worthwhile adjacent work: suggest it, don't do it.
 - Write general-purpose solutions, not ones that merely pass the given tests. Never hard-code values or special-case code to make a test pass; if a test looks wrong or the task infeasible, say so instead of working around it.
 
 ### Fresh-context review
@@ -55,8 +55,10 @@ Rankings, higher = better. **Cost** is relative token spend (API list price in/o
 | --- | --- | --- | --- | --- |
 | `haiku` | 9 | 3 | 3 | $1 / $5 |
 | `sonnet` | 6 | 5 | 7 | $3 / $15 |
-| `opus` | 4 | 7 | 8 | $5 / $25 |
-| omit → inherits session model (Fable) | 2 | 9 | 9 | $10 / $50 |
+| `opus` (Opus 4.8) | 4 | 7 | 8 | $5 / $25 |
+| omit → inherit orchestrator (Opus 4.8 / Fable) | 4 / 2 | 7 / 9 | 8 / 9 | $5/$25 or $10/$50 |
+
+**Orchestrator model.** The orchestrator (main-loop) model is set by `/model` and stored in `settings.json` (`model` key) — currently `opus[1m]` (Opus 4.8). Both Opus 4.8 and Fable are first-class orchestrators; omitting the model in a subagent or stage inherits whichever is set (the two-value cells above read Opus 4.8 / Fable, in that order). The apex is whatever `/model` is — there is no per-stage escalation above it. Consequence: with an **Opus 4.8** orchestrator, `omit` and `opus` resolve to the same tier (intelligence 7), so a review or verify stage that omits the model matches the loop rather than out-ranking it; with a **Fable** orchestrator, `omit` sits one tier above the `opus` override (intelligence 9).
 
 ### How to apply
 
@@ -65,7 +67,7 @@ Rankings, higher = better. **Cost** is relative token spend (API list price in/o
 - **Bulk mechanical work** (file inventories, grep-style sweeps, log trawls, format conversion, simple extraction, high-volume worker agents): `haiku` with `effort: 'low'`. Haiku is below the bar for anything that ships or requires judgement.
 - **Anything user-facing** (UI, copy, API design, docs) needs taste ≥ 7: `sonnet` minimum, prefer `opus`.
 - **Default worker tier** (codebase analysis and exploration, code generation, computer-use and browser sessions, documentation research, test writing): `sonnet`. Never `haiku` for vision-heavy work.
-- **Reviews of plans and implementations** (adversarial verification, judge and synthesis stages, security review, tricky debugging): `opus`, and never a lower tier than the model that authored the work — reviewing down tends to miss what the author missed. Omit the model (inherit Fable) when the subagent's judgement must match the main loop's, e.g. final pre-merge verification or user-facing synthesis.
+- **Reviews of plans and implementations** (adversarial verification, judge and synthesis stages, security review, tricky debugging): `opus`, and never a lower tier than the model that authored the work — reviewing down tends to miss what the author missed. Omit the model (inherit the orchestrator, Opus 4.8 or Fable) when the subagent's judgement must match the main loop's, e.g. final pre-merge verification or user-facing synthesis — the apex is whatever `/model` is set to, so with an Opus 4.8 orchestrator this equals the `opus` tier rather than a step above it.
 - **Verify subagent output before building on it.** Never accept a worker's success claim at face value: spot-check the artefact it says it produced (the file exists, the tests pass, the change is present). Distilled summaries are inputs to verify, not proof.
 - **Delegate deliberately.** Spawn subagents for parallelisable, context-isolated, or token-hungry work; for single-file edits or sequential steps that need shared context, work directly instead.
 - Pair the model choice with `effort`: `'low'` for mechanical stages, `high`/`xhigh` for verify and judge stages. To pin a model deterministically for a specific agent type, set `model:` in that agent's `.claude/agents/*.md` frontmatter instead of relying on per-call overrides.
@@ -97,6 +99,12 @@ Structure responses for scannability in the terminal:
 ## Documentation & Learning Resources
 
 When working with frameworks or libraries, consult the Context7 MCP for API references, configuration patterns, idioms, and feature availability — prefer it over possibly-stale training data, and reference what you consulted. If Context7 is not connected or lacks the library, fall back to WebFetch of the official docs and verify against the project's installed dependency version.
+
+---
+
+## TypeSafe for AI Judgement Steps
+
+Across every project, not one: when a feature needs a semantic decision that rules cannot make (routing a request, classifying, ranking or scoring items, selecting a value from candidates code already found, verification or escalation gates), invoke the `typesafe-ai` skill and consider TypeSafe's System One API before defaulting to an LLM prompt-and-parse step. The skill reads the live docs at docs.typesafe.ai; do not write TypeSafe code from memory. Keep generative work (text, code, reasoning) with Claude and deterministic work (rules, lookups, calculations) in plain code. Do not force TypeSafe where it does not fit.
 
 ---
 
