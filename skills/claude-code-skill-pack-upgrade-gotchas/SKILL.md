@@ -59,5 +59,9 @@ silently:
 - `npx skills add -a claude-code` copies folders into `~/.claude/skills`, while older
   installs symlinked them from `~/.agents/skills`. Expect both layouts side by side.
 - `--skill` takes several space-separated names in a single `add` call.
+- Before publishing a mirror of `~/.claude/skills` (a public dotfiles or plugin repo), exclude
+  `skills/synced/` and `skills/.trash/`. With claude.ai skill sync on, they hold Anthropic's
+  skills (`morning`, `computer-use`, `built-in-browser`), not yours. Also leave out copied
+  third-party skills whose folders lack their licence notice.
 - Related: [[official-marketplace-plugin-pin-lags-upstream]],
   [[claude-plugins-marketplace-temp-dir-leak]].
