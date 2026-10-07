@@ -28,7 +28,20 @@ EXCLUDES=(
     --exclude='*.log'
 )
 
-rsync -a --delete "${EXCLUDES[@]}" "$CLAUDE_DIR/skills/" "$PLUGIN_DIR/skills/"
+# Skills installed by `npx skills` are third-party, and their ~/.agents symlinks break on any
+# other machine; synced/ and .trash/ hold Anthropic's claude.ai skills. No trailing slash on
+# the patterns, so symlinks match too. Excluded names also survive --delete, which keeps the
+# vendored skills/to-issues copy in place.
+SKILL_EXCLUDES=(--exclude='/synced' --exclude='/.trash')
+SKILL_LOCK="$HOME/.agents/.skill-lock.json"
+if [[ -f "$SKILL_LOCK" ]]; then
+    command -v jq >/dev/null || { echo "ERROR: jq is needed to read $SKILL_LOCK" >&2; exit 1; }
+    while IFS= read -r name; do
+        SKILL_EXCLUDES+=(--exclude="/$name")
+    done < <(jq -r '.skills | keys[]' "$SKILL_LOCK")
+fi
+
+rsync -a --delete "${EXCLUDES[@]}" "${SKILL_EXCLUDES[@]}" "$CLAUDE_DIR/skills/" "$PLUGIN_DIR/skills/"
 echo "  Skills synced"
 
 rsync -a --delete "${EXCLUDES[@]}" "$CLAUDE_DIR/agents/" "$PLUGIN_DIR/agents/"
